@@ -22,7 +22,7 @@ const SCALE = 1.5;
 
 const shots = [
   { file: "overview.png", query: "page=overview" },
-  { file: "requests.png", query: "page=inbox&select=2" },
+  { file: "requests.png", query: "page=inbox&select=3" },
   {
     file: "request-origin.png",
     query: "page=inbox",
