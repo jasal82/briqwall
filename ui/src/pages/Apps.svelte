@@ -2,13 +2,14 @@
   import Icon from "../lib/Icon.svelte";
   import Avatar from "../lib/Avatar.svelte";
   import Switch from "../lib/Switch.svelte";
+  import AppDrawer from "./AppDrawer.svelte";
   import { store } from "../lib/store.svelte";
   import { accessLabel, accessTone, ago, categoryLabel, folderOf, isUserFacing } from "../lib/format";
   import { i18n, t, type Key } from "../lib/i18n/index.svelte";
   import type { AppInfo } from "../lib/types";
 
   type Filter = "all" | "allowed" | "blocked" | "custom";
-  let { selected = $bindable() }: { selected: string | null } = $props();
+  let { selected = $bindable(), docked = false }: { selected: string | null; docked?: boolean } = $props();
 
   let query = $state("");
   let filter = $state<Filter>("all");
@@ -61,6 +62,10 @@
     if (list) list.scrollTop = 0;
   });
 
+  function publisher(a: AppInfo): string {
+    return typeof a.signature === "object" && "Valid" in a.signature ? a.signature.Valid.publisher : "—";
+  }
+
   function inbound(a: AppInfo): { label: string; tone: string } {
     const explicit = a.rule !== null && a.rule.inbound !== "Auto";
     if (store.status?.mode === "Relaxed" && !explicit) return { label: t("apps.inbound.windows"), tone: "muted" };
@@ -95,44 +100,50 @@
     </span>
   </div>
 
-  <div class="card table">
-    <div class="thead">
-      <span>{t("apps.col.app")}</span><span>{t("apps.col.origin")}</span><span>{t("apps.col.internet")}</span><span
-        >{t("apps.col.inbound")}</span><span>{t("apps.col.last")}</span>
-    </div>
-    <div class="vlist" bind:this={list} onscroll={() => (scrollTop = list.scrollTop)}>
-      {#if rows.length === 0}
-        <div class="table-empty">{t("apps.none")}</div>
-      {/if}
-      <div class="spacer" style:height="{rows.length * ROW}px">
-        {#each visible as a, i (a.key)}
-          {@const inn = inbound(a)}
-          <div
-            class="trow"
-            class:sel={selected === a.key}
-            style:top="{(first + i) * ROW}px"
-            role="button"
-            tabindex="0"
-            onclick={() => (selected = a.key)}
-            onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (selected = a.key)}>
-            <div class="appcell">
-              <Avatar name={a.name} small />
-              <div class="t">
-                <b class="ellipsis" title={a.name}>{a.name}</b>
-                <div class="faint ellipsis" title={a.path}>{folderOf(a.path)}</div>
+  <div class="apps-split" class:docked={docked && selected !== null}>
+    <div class="card table">
+      <div class="thead">
+        <span>{t("apps.col.app")}</span><span class="col-pub">{t("apps.col.publisher")}</span><span>{t("apps.col.origin")}</span><span>{t("apps.col.internet")}</span><span
+          >{t("apps.col.inbound")}</span><span>{t("apps.col.last")}</span>
+      </div>
+      <div class="vlist" bind:this={list} onscroll={() => (scrollTop = list.scrollTop)}>
+        {#if rows.length === 0}
+          <div class="table-empty">{t("apps.none")}</div>
+        {/if}
+        <div class="spacer" style:height="{rows.length * ROW}px">
+          {#each visible as a, i (a.key)}
+            {@const inn = inbound(a)}
+            <div
+              class="trow"
+              class:sel={selected === a.key}
+              style:top="{(first + i) * ROW}px"
+              role="button"
+              tabindex="0"
+              onclick={() => (selected = a.key)}
+              onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (selected = a.key)}>
+              <div class="appcell">
+                <Avatar name={a.name} small />
+                <div class="t">
+                  <b class="ellipsis" title={a.name}>{a.name}</b>
+                  <div class="faint ellipsis" title={a.path}>{folderOf(a.path)}</div>
+                </div>
               </div>
+              <span class="col-pub ellipsis" title={publisher(a)}>{publisher(a)}</span>
+              <span><span class="badge">{categoryLabel(a.category)}</span></span>
+              {#if a.effective_out === "Ask" && !a.pending}
+                <span class="state muted" title={t("apps.asks.tip")}><i></i>{t("apps.asks")}</span>
+              {:else}
+                <span class="state {accessTone[a.effective_out]}"><i></i>{accessLabel(a.effective_out)}{a.rule?.expires ? " ⏱" : ""}</span>
+              {/if}
+              <span class="state {inn.tone}"><i></i>{inn.label}</span>
+              <span class="time">{ago(a.last_blocked && a.last_blocked > a.last_seen ? a.last_blocked : a.last_seen)}</span>
             </div>
-            <span><span class="badge">{categoryLabel(a.category)}</span></span>
-            {#if a.effective_out === "Ask" && !a.pending}
-              <span class="state muted" title={t("apps.asks.tip")}><i></i>{t("apps.asks")}</span>
-            {:else}
-              <span class="state {accessTone[a.effective_out]}"><i></i>{accessLabel(a.effective_out)}{a.rule?.expires ? " ⏱" : ""}</span>
-            {/if}
-            <span class="state {inn.tone}"><i></i>{inn.label}</span>
-            <span class="time">{ago(a.last_blocked && a.last_blocked > a.last_seen ? a.last_blocked : a.last_seen)}</span>
-          </div>
-        {/each}
+          {/each}
+        </div>
       </div>
     </div>
+    {#if docked && selected !== null}
+      <AppDrawer key={selected} docked onclose={() => (selected = null)} />
+    {/if}
   </div>
 </section>

@@ -8,7 +8,7 @@
   import { q, t } from "../lib/i18n/index.svelte";
   import type { AppInfo, RuleAccess } from "../lib/types";
 
-  let { key, onclose }: { key: string | null; onclose: () => void } = $props();
+  let { key, onclose, docked = false }: { key: string | null; onclose: () => void; docked?: boolean } = $props();
 
   // Keep showing the last app while the panel slides out.
   let last = $state<AppInfo | null>(null);
@@ -40,8 +40,8 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="drawer-wrap">
-  <aside class="drawer" class:open aria-hidden={!open} aria-label={t("drawer.aria")}>
+{#snippet panel()}
+  <aside class="drawer" class:open class:docked aria-hidden={!open} aria-label={t("drawer.aria")}>
     {#if app}
       <div class="drawer-head">
         <Avatar name={app.name} />
@@ -104,4 +104,10 @@
       </div>
     {/if}
   </aside>
-</div>
+{/snippet}
+
+{#if docked}
+  {@render panel()}
+{:else}
+  <div class="drawer-wrap">{@render panel()}</div>
+{/if}

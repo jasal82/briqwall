@@ -62,15 +62,19 @@
     </div>
   {/if}
 
-  {#each store.pending as app (app.key)}
-    <RequestCard {app} selected={selected.includes(app.key)} ontoggle={() => toggle(app.key)} />
+  {#if store.pending.length > 0}
+    <div class="req-grid">
+      {#each store.pending as app (app.key)}
+        <RequestCard {app} selected={selected.includes(app.key)} ontoggle={() => toggle(app.key)} />
+      {/each}
+    </div>
   {:else}
     <div class="card empty">
       <div class="big"><Icon name="check" size={30} /></div>
       <h3 style="margin:0 0 4px;font:600 18px var(--font-display)">{t("inbox.empty.title")}</h3>
       <p class="muted" style="margin:0">{t("inbox.empty.text")}</p>
     </div>
-  {/each}
+  {/if}
 
   {#if store.pending.length > 0 && !store.status?.privileged}
     <p class="uac" style="margin-top:16px">

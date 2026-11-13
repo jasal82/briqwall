@@ -12,6 +12,11 @@
 
   let selectedApp = $state<string | null>(null);
   let main: HTMLElement;
+  let contentWidth = $state(0);
+
+  /** Wide enough to show the app details next to the list instead of over it. */
+  const DOCK_WIDTH = 1120;
+  const docked = $derived(contentWidth >= DOCK_WIDTH);
 
   const nav: { id: Page; icon: IconName; label: Key }[] = [
     { id: "overview", icon: "home", label: "nav.overview" },
@@ -77,7 +82,7 @@
     </div>
   </nav>
 
-  <div class="content">
+  <div class="content" bind:clientWidth={contentWidth}>
     <main class="main" class:no-scroll={store.page === "apps" && online} bind:this={main}>
       {#if !store.ready}
         <!-- first paint: nothing, avoids flashing an offline message -->
@@ -99,14 +104,14 @@
       {:else if store.page === "inbox"}
         <Inbox />
       {:else if store.page === "apps"}
-        <Apps bind:selected={selectedApp} />
+        <Apps bind:selected={selectedApp} {docked} />
       {:else if store.page === "activity"}
         <Activity />
       {:else}
         <Settings />
       {/if}
     </main>
-    {#if online && store.page === "apps"}
+    {#if online && store.page === "apps" && !docked}
       <AppDrawer key={selectedApp} onclose={() => (selectedApp = null)} />
     {/if}
   </div>

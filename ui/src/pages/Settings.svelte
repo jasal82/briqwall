@@ -15,7 +15,7 @@
   const systemLangName = $derived(i18n.system === "de" ? "Deutsch" : "English");
 </script>
 
-<section class="page">
+<section class="page read">
   <div class="page-head"><div><h1>{t("nav.settings")}</h1></div></div>
 
   <h2 style="margin-top:0">{t("settings.general")}</h2>

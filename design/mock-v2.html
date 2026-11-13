@@ -1,0 +1,809 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Briqwall – Mock v2 (Sidebar & breite Fenster)</title>
+<style>
+/* ===== current app stylesheet (ui/src/app.css), injected by the build step ===== */
+
+/* ------------------------------------------------------------------ tokens */
+:root {
+  --font: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+
+  --bg: #f4f5f8;
+  --nav: #eceef3;
+  --surface: #ffffff;
+  --surface-2: #f8f9fb;
+  --hover: #f1f3f7;
+  --border: #e3e6ec;
+  --border-strong: #d3d8e1;
+  --text: #1a1e27;
+  --text-2: #545c6b;
+  --text-3: #858c9a;
+
+  --accent: #2f6fed;
+  --accent-hover: #2560d6;
+  --accent-soft: #e8effd;
+  --ok: #138a4a;
+  --ok-soft: #e4f5ea;
+  --warn: #b45f06;
+  --warn-soft: #fdf1df;
+  --danger: #cf2e2e;
+  --danger-soft: #fde8e8;
+
+  --radius: 10px;
+  --radius-lg: 14px;
+  --shadow: 0 1px 2px rgba(20, 28, 45, .05), 0 1px 1px rgba(20, 28, 45, .03);
+  --shadow-pop: 0 10px 30px rgba(20, 28, 45, .14), 0 2px 6px rgba(20, 28, 45, .08);
+}
+:root[data-theme="dark"] {
+  --bg: #1f2229;
+  --nav: #1a1d23;
+  --surface: #272b33;
+  --surface-2: #2c3039;
+  --hover: #30353f;
+  --border: #363b46;
+  --border-strong: #444a57;
+  --text: #eceef2;
+  --text-2: #b0b6c2;
+  --text-3: #868d9b;
+  --accent: #6b9bff;
+  --accent-hover: #82abff;
+  --accent-soft: #2b3753;
+  --ok: #4cc584;
+  --ok-soft: #233a2f;
+  --warn: #f0a845;
+  --warn-soft: #3d3222;
+  --danger: #ff7272;
+  --danger-soft: #432a2c;
+  --shadow: 0 1px 2px rgba(0,0,0,.25);
+  --shadow-pop: 0 12px 32px rgba(0,0,0,.45);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+  --bg: #1f2229;
+  --nav: #1a1d23;
+  --surface: #272b33;
+  --surface-2: #2c3039;
+  --hover: #30353f;
+  --border: #363b46;
+  --border-strong: #444a57;
+  --text: #eceef2;
+  --text-2: #b0b6c2;
+  --text-3: #868d9b;
+  --accent: #6b9bff;
+  --accent-hover: #82abff;
+  --accent-soft: #2b3753;
+  --ok: #4cc584;
+  --ok-soft: #233a2f;
+  --warn: #f0a845;
+  --warn-soft: #3d3222;
+  --danger: #ff7272;
+  --danger-soft: #432a2c;
+  --shadow: 0 1px 2px rgba(0,0,0,.25);
+  --shadow-pop: 0 12px 32px rgba(0,0,0,.45);
+}
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font: 14px/1.45 var(--font);
+  color: var(--text);
+  background: var(--bg);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select { font: inherit; color: inherit; }
+svg { flex: none; }
+
+/* ------------------------------------------------------------------ app layout */
+#app { height: 100%; }
+.app { display: grid; grid-template-columns: 236px 1fr; height: 100%; min-height: 0; }
+.nav { background: var(--nav); padding: 10px 10px 14px; display: flex; flex-direction: column; gap: 2px; min-height: 0; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 6px 10px 18px; }
+.brand-mark { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: linear-gradient(140deg, #2fbf71, #1a8f55); color: #fff; }
+.brand b { font: 600 17px var(--font-display); letter-spacing: -.01em; }
+.nav-item {
+  display: flex; align-items: center; gap: 12px; height: 38px; padding: 0 12px; border-radius: 8px;
+  color: var(--text-2); cursor: pointer; border: 0; background: none; text-align: left; position: relative; width: 100%;
+}
+.nav-item:hover { background: var(--hover); color: var(--text); }
+.nav-item.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow); }
+.nav-item.active::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 3px; background: var(--accent); }
+.nav-item .count { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--warn); color: #fff; font-size: 12px; font-weight: 600; font-style: normal; font-variant-numeric: tabular-nums; display: grid; place-items: center; }
+.nav-foot { margin-top: auto; padding: 10px 12px 0; display: grid; gap: 8px; font-size: 12.5px; color: var(--text-3); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; box-shadow: 0 0 0 3px var(--ok-soft); }
+.nav-foot .row { display: flex; align-items: center; gap: 8px; }
+
+.content { position: relative; min-width: 0; min-height: 0; overflow: hidden; display: grid; }
+.main { overflow-y: auto; overflow-x: hidden; min-width: 0; min-height: 0; scrollbar-gutter: stable; }
+.page { padding: 28px 36px 48px; max-width: 1040px; margin: 0 auto; animation: fade .16s ease-out; }
+@keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.page-head { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 20px; }
+.page-head h1 { font: 600 26px/1.2 var(--font-display); letter-spacing: -.015em; margin: 0; }
+.page-head p { margin: 4px 0 0; color: var(--text-2); max-width: 640px; }
+.page-head .sp { flex: 1; }
+h2 { font: 600 15px var(--font-display); margin: 28px 0 10px; letter-spacing: -.005em; }
+
+/* ------------------------------------------------------------------ primitives */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow); }
+.pad { padding: 18px 20px; }
+.muted { color: var(--text-2); }
+.faint { color: var(--text-3); font-size: 12.5px; }
+.btn {
+  height: 34px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--surface);
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 500; white-space: nowrap;
+  transition: background .12s, border-color .12s, transform .06s;
+}
+.btn:hover { background: var(--hover); }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: var(--accent-hover); }
+.btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+.btn.danger:hover { background: var(--danger-soft); }
+.btn.danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--text-2); }
+.btn.ghost:hover { background: var(--hover); color: var(--text); }
+.btn.sm { height: 28px; padding: 0 10px; font-size: 13px; }
+.split { display: inline-flex; position: relative; }
+.split > .btn.split-main { border-radius: 8px 0 0 8px; }
+.split > .btn.split-toggle { border-radius: 0 8px 8px 0; padding: 0 9px; margin-left: -1px; }
+.split > .btn.primary.split-toggle { margin-left: 0; box-shadow: inset 1px 0 0 rgba(255, 255, 255, .32); }
+.split > .btn.split-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.split > .btn.split-toggle svg { transition: transform .15s; }
+
+.badge { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); white-space: nowrap; }
+.badge.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.badge.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.badge.danger { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+.badge.accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+
+.avatar { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; font: 600 16px var(--font-display); color: #fff; flex: none; }
+.avatar.sm { width: 32px; height: 32px; border-radius: 8px; font-size: 13px; }
+
+.seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; padding: 3px; gap: 2px; }
+.seg button { border: 0; background: none; height: 28px; padding: 0 12px; border-radius: 6px; color: var(--text-2); cursor: pointer; font-size: 13px; white-space: nowrap; }
+.seg button:hover { color: var(--text); }
+.seg button.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow), 0 0 0 1px var(--border); }
+
+.switch { width: 40px; height: 22px; border-radius: 11px; background: var(--border-strong); position: relative; cursor: pointer; border: 0; flex: none; transition: background .15s; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+.switch.on { background: var(--accent); }
+.switch.on::after { transform: translateX(18px); }
+
+.chip { height: 30px; padding: 0 12px; border-radius: 15px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; color: var(--text-2); font-size: 13px; white-space: nowrap; }
+.chip:hover { border-color: var(--border-strong); color: var(--text); }
+.chip.on { background: var(--text); border-color: var(--text); color: var(--surface); }
+
+.input { height: 34px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); padding: 0 12px 0 34px; width: 260px; outline: none; }
+.input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.search { position: relative; }
+.search svg { position: absolute; left: 11px; top: 9px; color: var(--text-3); }
+
+/* ------------------------------------------------------------------ overview */
+.hero { display: grid; grid-template-columns: auto 1fr auto; gap: 20px; align-items: center; padding: 22px 24px; position: relative; overflow: hidden; }
+.hero::after { content: ""; position: absolute; inset: 0; background: radial-gradient(600px 200px at 0% 0%, color-mix(in srgb, var(--ok) 10%, transparent), transparent 70%); pointer-events: none; }
+.hero-icon { width: 64px; height: 64px; border-radius: 18px; display: grid; place-items: center; background: var(--ok-soft); color: var(--ok); }
+.hero h3 { margin: 0; font: 600 22px/1.25 var(--font-display); letter-spacing: -.01em; }
+.hero .meta { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; color: var(--text-2); }
+.hero .meta span { display: inline-flex; align-items: center; gap: 6px; }
+
+.callout { display: flex; align-items: center; gap: 14px; padding: 12px 14px 12px 16px; margin-top: 12px; border-radius: var(--radius-lg); background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 25%, transparent); }
+.callout .t { flex: 1; min-width: 0; }
+.callout b { display: block; }
+.callout .ic { color: var(--warn); }
+
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 12px; }
+.stat { padding: 16px 20px; border-right: 1px solid var(--border); }
+.stat:last-child { border-right: 0; }
+.stat .v { font: 600 26px/1.15 var(--font-display); letter-spacing: -.02em; }
+.stat .l { color: var(--text-2); font-size: 13px; }
+
+.levels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.level { text-align: left; padding: 16px 16px 14px; border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--surface); cursor: pointer; box-shadow: var(--shadow); display: grid; gap: 6px; position: relative; transition: border-color .12s, box-shadow .12s; }
+.level:hover { border-color: var(--border-strong); }
+.level.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+.level .top { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+.level .radio { margin-left: auto; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--border-strong); }
+.level.on .radio { border: 5px solid var(--accent); }
+.level p { margin: 0; color: var(--text-2); font-size: 13px; }
+.level .rec { font-size: 11.5px; font-weight: 600; color: var(--accent); background: var(--accent-soft); padding: 1px 7px; border-radius: 5px; }
+
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.list-row { display: flex; align-items: center; gap: 12px; padding: 11px 20px; border-top: 1px solid var(--border); min-width: 0; }
+.list-row:first-child { border-top: 0; }
+.list-row .grow { flex: 1; min-width: 0; }
+.ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev-icon { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex: none; }
+.ev-icon.ok { background: var(--ok-soft); color: var(--ok); }
+.ev-icon.danger { background: var(--danger-soft); color: var(--danger); }
+.ev-icon.warn { background: var(--warn-soft); color: var(--warn); }
+.ev-icon.accent { background: var(--accent-soft); color: var(--accent); }
+.card-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px 10px; }
+.card-head b { font: 600 14.5px var(--font-display); }
+.link { color: var(--accent); cursor: pointer; font-weight: 500; background: none; border: 0; padding: 0; }
+.link:hover { text-decoration: underline; }
+
+/* ------------------------------------------------------------------ requests */
+.req { padding: 18px 20px; display: grid; gap: 14px; }
+.req + .req { margin-top: 12px; }
+.req-head { display: flex; gap: 14px; align-items: flex-start; min-width: 0; }
+.req-head .grow { flex: 1; min-width: 0; }
+.req-head h3 { margin: 0; font: 600 16px var(--font-display); }
+.req-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.why { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; display: grid; gap: 4px; }
+.why .k { font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; }
+.req-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.req-actions .sp { flex: 1; }
+.req.risk-high { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
+.menu { position: absolute; z-index: 10; min-width: 230px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-pop); padding: 5px; display: none; }
+.menu.open { display: block; }
+.menu button { display: grid; width: 100%; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 7px; cursor: pointer; }
+.menu button:hover { background: var(--hover); }
+.menu small { color: var(--text-3); }
+.uac { display: flex; gap: 8px; align-items: center; color: var(--text-3); font-size: 12.5px; }
+
+.empty { text-align: center; padding: 56px 20px; }
+.empty .big { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; margin: 0 auto 14px; background: var(--ok-soft); color: var(--ok); }
+
+/* ------------------------------------------------------------------ apps */
+.toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.toolbar .sp { flex: 1; }
+.table { overflow: hidden; }
+.thead, .trow { display: grid; grid-template-columns: minmax(220px, 2.4fr) minmax(110px, 1fr) 132px 132px 110px; gap: 12px; align-items: center; padding: 0 16px; }
+.thead { height: 38px; font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.trow { min-height: 56px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.trow:last-child { border-bottom: 0; }
+.trow:hover { background: var(--hover); }
+.trow.sel { background: var(--accent-soft); }
+.appcell { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.appcell .t { min-width: 0; }
+.appcell b { font-weight: 600; display: block; }
+.state { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; font-size: 13px; }
+.state i { width: 8px; height: 8px; border-radius: 50%; }
+.state.ok i { background: var(--ok); } .state.ok { color: var(--ok); }
+.state.danger i { background: var(--danger); } .state.danger { color: var(--danger); }
+.state.warn i { background: var(--warn); } .state.warn { color: var(--warn); }
+.state.accent i { background: var(--accent); } .state.accent { color: var(--accent); }
+.state.muted i { background: var(--text-3); } .state.muted { color: var(--text-2); }
+
+.drawer-wrap { position: absolute; inset: 0; pointer-events: none; }
+.drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 440px; max-width: 92%; background: var(--surface); border-left: 1px solid var(--border); box-shadow: var(--shadow-pop); transform: translateX(105%); visibility: hidden; transition: transform .22s cubic-bezier(.2,.8,.2,1), visibility 0s .22s; pointer-events: auto; display: flex; flex-direction: column; }
+.drawer.open { transform: none; visibility: visible; transition: transform .22s cubic-bezier(.2,.8,.2,1); }
+.drawer-head { padding: 20px 22px 14px; display: flex; gap: 14px; align-items: flex-start; border-bottom: 1px solid var(--border); }
+.drawer-body { padding: 18px 22px; overflow: auto; display: grid; gap: 18px; align-content: start; }
+.field { display: grid; gap: 8px; min-width: 0; }
+.drawer-body > * { min-width: 0; }
+.drawer .seg { display: flex; }
+.drawer .seg button { flex: 1; padding: 0 6px; }
+.field label, .field .label { font-weight: 600; font-size: 13px; }
+.kv { display: grid; grid-template-columns: 120px 1fr; gap: 8px 12px; font-size: 13px; }
+.kv dt { color: var(--text-3); }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------------------ activity */
+.day { font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; margin: 18px 4px 8px; }
+.time { color: var(--text-3); font-size: 12.5px; font-variant-numeric: tabular-nums; flex: none; }
+
+/* ------------------------------------------------------------------ settings */
+.setting { display: flex; align-items: center; gap: 16px; padding: 16px 20px; border-top: 1px solid var(--border); }
+.setting:first-child { border-top: 0; }
+.setting .grow { flex: 1; min-width: 0; }
+.setting b { font-weight: 600; display: block; }
+.setting .ic { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; background: var(--surface-2); color: var(--text-2); flex: none; border: 1px solid var(--border); }
+
+/* ------------------------------------------------------------------ responsive */
+/* (viewport compact block removed for the mock) */
+
+/* ------------------------------------------------------------------ app additions */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input, .selectable { user-select: text; -webkit-user-select: text; }
+.main::-webkit-scrollbar, .vlist::-webkit-scrollbar, .drawer-body::-webkit-scrollbar { width: 10px; }
+.main::-webkit-scrollbar-thumb, .vlist::-webkit-scrollbar-thumb, .drawer-body::-webkit-scrollbar-thumb {
+  background: var(--border-strong); border-radius: 10px; border: 3px solid transparent; background-clip: content-box;
+}
+.main::-webkit-scrollbar-thumb:hover, .vlist::-webkit-scrollbar-thumb:hover { background-color: var(--text-3); }
+button:disabled { opacity: .55; cursor: default; }
+
+/* hero tones */
+.hero.tone-warn .hero-icon { background: var(--warn-soft); color: var(--warn); }
+.hero.tone-warn::after { background: radial-gradient(600px 200px at 0% 0%, color-mix(in srgb, var(--warn) 12%, transparent), transparent 70%); }
+.hero.tone-danger .hero-icon { background: var(--danger-soft); color: var(--danger); }
+.hero.tone-danger::after { background: radial-gradient(600px 200px at 0% 0%, color-mix(in srgb, var(--danger) 10%, transparent), transparent 70%); }
+.hero > .actions { position: relative; z-index: 1; display: flex; gap: 8px; }
+
+/* nav busy indicator */
+.spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-strong); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* toast */
+.toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 100;
+  display: flex; align-items: center; gap: 10px; padding: 10px 16px 10px 12px; border-radius: 10px;
+  background: var(--text); color: var(--surface); box-shadow: var(--shadow-pop); font-weight: 500; max-width: min(560px, 90vw);
+  animation: toastIn .2s ease-out;
+}
+.toast .ti { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; flex: none; }
+.toast.ok .ti { background: var(--ok); color: #fff; }
+.toast.warn .ti { background: var(--warn); color: #fff; }
+.toast.danger .ti { background: var(--danger); color: #fff; }
+@keyframes toastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* apps page: fixed toolbar, virtualized body */
+.page.fill { height: 100%; display: flex; flex-direction: column; padding-bottom: 20px; }
+.page.fill .table { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.vlist { flex: 1; min-height: 0; overflow-y: auto; position: relative; }
+.vlist .spacer { position: relative; }
+.vlist .trow { position: absolute; left: 0; right: 0; height: 56px; border-bottom: 1px solid var(--border); }
+.table-empty { padding: 40px 20px; text-align: center; color: var(--text-2); }
+.main.no-scroll { overflow: hidden; }
+
+/* offline */
+.offline { max-width: 560px; margin: 80px auto; text-align: center; padding: 0 24px; }
+.offline .big { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; margin: 0 auto 16px; background: var(--warn-soft); color: var(--warn); }
+.offline h1 { font: 600 22px var(--font-display); margin: 0 0 8px; }
+.offline .actions { display: flex; gap: 8px; justify-content: center; margin-top: 18px; }
+.offline code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12.5px; background: var(--surface-2); border: 1px solid var(--border); padding: 2px 6px; border-radius: 5px; }
+
+/* misc */
+.tampered { display: flex; gap: 8px; align-items: center; color: var(--danger); font-weight: 500; }
+.notice { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); font-size: 13px; }
+.badge svg, .state svg { flex: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* multi-select in the inbox */
+.check {
+  width: 22px; height: 22px; margin-top: 9px; border-radius: 6px; flex: none; cursor: pointer;
+  border: 1.5px solid var(--border-strong); background: var(--surface); color: transparent;
+  display: grid; place-items: center; padding: 0; transition: background .12s, border-color .12s;
+}
+.check:hover { border-color: var(--accent); }
+.check.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.req.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+.bulkbar {
+  position: sticky; bottom: 16px; z-index: 5; margin-top: 16px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 12px 10px 18px; border-radius: var(--radius-lg);
+  background: var(--surface); border: 1px solid var(--border-strong); box-shadow: var(--shadow-pop);
+  animation: toastIn .18s ease-out;
+}
+.bulkbar b { margin-right: auto; }
+.hello-tip { display: flex; align-items: center; gap: 14px; padding: 14px 16px; margin-bottom: 14px; border-radius: var(--radius-lg); background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); }
+.hello-tip .t { flex: 1; min-width: 0; }
+.hello-tip .t b { display: block; }
+.hello-tip .ic { color: var(--accent); flex: none; }
+
+/* process origin of blocked attempts */
+.origin { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; display: grid; gap: 8px; min-width: 0; }
+.origin.compact { padding: 0; border: 0; background: none; }
+.origin .k { font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; }
+.origin-item { display: grid; gap: 6px; min-width: 0; }
+.chain { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.chain .proc { font: 500 12.5px "Cascadia Mono", Consolas, monospace; padding: 2px 7px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border); }
+.chain .proc.me { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); color: var(--accent); }
+.chain .proc.bad { border-color: color-mix(in srgb, var(--danger) 50%, var(--border)); color: var(--danger); background: var(--danger-soft); }
+.chain .sep { color: var(--text-3); }
+.cmd {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  font: 12.5px/1.5 "Cascadia Mono", Consolas, monospace; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.origin-warn { display: flex; gap: 8px; align-items: flex-start; color: var(--danger); font-weight: 500; font-size: 13px; }
+.origin-warn svg { margin-top: 2px; }
+.origin .link { justify-self: start; font-size: 13px; }
+
+
+/* ===================================================================== mock chrome */
+html, body { height: auto; overflow: auto; user-select: auto; }
+body { background: #c4cad5; }
+.mockbar {
+  position: sticky; top: 0; z-index: 50; display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+  padding: 8px 14px; background: rgba(255,255,255,.94); border-bottom: 1px solid #cfd5df; font-size: 12.5px; color: #1a1e27;
+  backdrop-filter: blur(6px);
+}
+.mockbar .grp { display: flex; gap: 4px; align-items: center; }
+.mockbar .grp > span { color: #6b7280; margin-right: 4px; }
+.mockbar button { border: 1px solid #cfd5df; background: #fff; border-radius: 7px; padding: 3px 9px; cursor: pointer; font: inherit; color: inherit; }
+.mockbar button.on { background: #1a1e27; color: #fff; border-color: #1a1e27; }
+.mockbar .note { margin-left: auto; color: #6b7280; }
+.stage { padding: 22px; display: flex; justify-content: center; overflow-x: auto; }
+.window {
+  width: var(--win-w, 1180px); height: 820px; flex: none;
+  border-radius: 10px; overflow: hidden; box-shadow: 0 24px 60px rgba(15,20,35,.28), 0 0 0 1px rgba(15,20,35,.12);
+  display: grid; grid-template-rows: 32px 1fr; background: var(--bg); container: win / inline-size;
+}
+.titlebar { display: flex; align-items: center; gap: 8px; padding-left: 14px; background: var(--nav); font-size: 12px; color: var(--text-2); }
+.titlebar .sp { flex: 1; }
+.titlebar .wc { width: 46px; height: 32px; display: grid; place-items: center; }
+.window .app { height: auto; min-height: 0; }
+
+/* ===================================================================== 1) sidebar selection */
+/* remove the accent bar everywhere; variants are chosen on <html data-nav> */
+.nav-item.active::before { content: none; }
+
+/* A – tinted (recommended): soft accent background, accent icon + text */
+[data-nav="tint"] .nav-item.active { background: color-mix(in srgb, var(--accent) 13%, var(--nav)); color: var(--accent); box-shadow: none; font-weight: 600; }
+[data-nav="tint"] .nav-item.active svg { color: var(--accent); }
+[data-nav="tint"] .nav-item:hover:not(.active) { background: color-mix(in srgb, var(--text) 6%, transparent); }
+
+/* B – surface: raised white tile, only the icon carries the accent */
+[data-nav="surface"] .nav-item.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow), 0 0 0 1px var(--border); }
+[data-nav="surface"] .nav-item.active svg { color: var(--accent); }
+
+/* current state for comparison */
+[data-nav="current"] .nav-item.active::before {
+  content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 3px; background: var(--accent);
+}
+
+/* ===================================================================== 2) layout that grows */
+.content { container: main / inline-size; }
+.page { max-width: none; padding: 28px clamp(22px, 3cqi, 48px) 48px; }
+.page.read { max-width: 900px; } /* settings: keep line length readable */
+.page-inner { max-width: 1520px; margin: 0 auto; }
+
+/* compact window (< 1000 px): icon-only navigation (unchanged behaviour) */
+@container win (max-width: 999px) {
+  .app { grid-template-columns: 64px 1fr; }
+  .nav { padding: 10px 8px; }
+  .brand b, .nav-item span:not(.count), .nav-foot .txt { display: none; }
+  .brand { justify-content: center; padding: 6px 0 18px; }
+  .nav-item { justify-content: center; padding: 0; }
+  .nav-item .count { position: absolute; top: 2px; right: 4px; min-width: 18px; height: 18px; font-size: 11px; }
+  .nav-foot { padding: 0; justify-items: center; }
+}
+
+/* --- overview: dashboard with a side column once there is room --- */
+.dash { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+.dash .side { display: grid; gap: 12px; align-content: start; }
+.dash .main-col { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.dash h2 { margin: 16px 0 0; }
+@container main (min-width: 1180px) {
+  .dash { grid-template-columns: minmax(0, 1fr) minmax(340px, 400px); align-items: start; }
+  .dash .side { position: sticky; top: 0; }
+}
+@container main (max-width: 760px) {
+  .levels { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat:nth-child(2) { border-right: 0; }
+  .stat:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
+}
+
+/* --- requests: two columns on wide windows --- */
+.req-grid { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+.req-grid .req + .req { margin-top: 0; }
+@container main (min-width: 1280px) { .req-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* --- apps: list + docked details side by side --- */
+.apps-split { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+.apps-split .docked { display: none; }
+.apps-split .card.table { min-width: 0; }
+.trow, .thead { grid-template-columns: minmax(220px, 2.4fr) minmax(110px, 1fr) 132px 132px 110px; }
+.col-pub { display: none; }
+/* docked: the panel already shows origin + last activity, so the list drops those columns */
+@container main (min-width: 1120px) {
+  .apps-split.has-sel { grid-template-columns: minmax(0, 1fr) 400px; align-items: start; }
+  .apps-split.has-sel .docked { display: flex; position: sticky; top: 0; }
+  .apps-split.has-sel :is(.thead, .trow) { grid-template-columns: minmax(200px, 2fr) 124px 124px; }
+  .apps-split.has-sel :is(.thead, .trow) > :is(:nth-child(2), :nth-child(3), :nth-child(6)) { display: none; }
+}
+@container main (min-width: 1560px) {
+  .apps-split :is(.thead, .trow), .apps-split.has-sel :is(.thead, .trow) { grid-template-columns: minmax(240px, 2.2fr) minmax(170px, 1.3fr) minmax(110px, 1fr) 124px 124px 100px; }
+  .apps-split.has-sel :is(.thead, .trow) > :is(:nth-child(2), :nth-child(3), :nth-child(6)) { display: block; }
+}
+.docked { flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow); min-height: 0; overflow: hidden; }
+.docked .drawer-head { border-bottom: 1px solid var(--border); }
+.overlay-hint { display: flex; width: max-content; }
+@container main (min-width: 1120px) { .annot.overlay-hint { display: none; } }
+
+/* --- activity: summary column on wide windows --- */
+.act { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+.act .summary { display: none; }
+@container main (min-width: 1180px) {
+  .act { grid-template-columns: minmax(0, 1fr) 340px; }
+  .act .summary { display: grid; gap: 12px; position: sticky; top: 0; }
+}
+.kpi { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.kpi div { padding: 14px 16px; border-right: 1px solid var(--border); }
+.kpi div:last-child { border-right: 0; }
+.kpi b { display: block; font: 600 22px var(--font-display); }
+.kpi span { color: var(--text-2); font-size: 12.5px; }
+.bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin-top: 6px; }
+.bar i { display: block; height: 100%; background: var(--danger); border-radius: 3px; }
+
+.annot { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--accent); background: var(--accent-soft); padding: 3px 9px; border-radius: 6px; margin-bottom: 12px; }
+.mono { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" d="M12 3 4.5 6v5.5c0 4.6 3.1 8.2 7.5 9.5 4.4-1.3 7.5-4.9 7.5-9.5V6L12 3Z"/></symbol>
+    <symbol id="i-shield-check" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" d="M12 3 4.5 6v5.5c0 4.6 3.1 8.2 7.5 9.5 4.4-1.3 7.5-4.9 7.5-9.5V6L12 3Z"/><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="m8.7 12 2.3 2.3 4.4-4.6"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1v-8.5Z"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" d="M6 16.5V11a6 6 0 1 1 12 0v5.5l1.5 1.5h-15L6 16.5Z"/><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M10 20.5a2.2 2.2 0 0 0 4 0"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.75"/><rect x="13" y="4" width="7" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.75"/><rect x="4" y="13" width="7" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.75"/><rect x="13" y="13" width="7" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.75"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="M3 12h4l2.5-6 5 12 2.5-6H21"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.75"/><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" d="M12 2.8 14 5l3-.4.9 2.9 2.6 1.5-.8 2.9.8 2.9-2.6 1.5-.9 2.9-3-.4-2 2.2-2-2.2-3 .4-.9-2.9-2.6-1.5.8-2.9-.8-2.9 2.6-1.5L7 4.6l3 .4 2-2.2Z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-block" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.75"/><path stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="m6.4 17.6 11.2-11.2"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" d="M10.3 4.5 2.9 17.6A2 2 0 0 0 4.6 20.5h14.8a2 2 0 0 0 1.7-2.9L13.7 4.5a2 2 0 0 0-3.4 0Z"/><path stroke="currentColor" stroke-width="1.9" stroke-linecap="round" d="M12 9.5v4.2M12 16.9v.1"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.75"/><path stroke="currentColor" stroke-width="1.9" stroke-linecap="round" d="M12 11v5.2M12 7.9v.1"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M3.5 9.5a12.5 12.5 0 0 1 17 0M6.5 12.8a8 8 0 0 1 11 0M9.5 16a3.6 3.6 0 0 1 5 0"/><circle cx="12" cy="19" r="1.1" fill="currentColor"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/><path fill="none" stroke="currentColor" stroke-width="1.75" d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.75"/><path stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="m16 16 4 4"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="m7 10 5 5 5-5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="m6.5 6.5 11 11m0-11-11 11"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.75"/><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M12 7.5V12l3 2"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.75"/><path fill="none" stroke="currentColor" stroke-width="1.5" d="M3.8 12h16.4M12 3.8c2.4 2.4 3.4 5.2 3.4 8.2s-1 5.8-3.4 8.2c-2.4-2.4-3.4-5.2-3.4-8.2s1-5.8 3.4-8.2Z"/></symbol>
+    <symbol id="i-fingerprint" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M6.5 8.5a6.5 6.5 0 0 1 11.6 1.8M5.5 13c0-1 .1-1.9.4-2.7M18.5 12.6c0 2.4-.4 4.6-1.2 6.4M9 19.5c.7-2 1.1-4.3 1.1-6.6a1.9 1.9 0 0 1 3.8 0c0 1 0 2-.1 3M8.1 12.6c0 1.9-.3 3.6-.8 5.1M15.4 17.8c-.2.8-.5 1.6-.8 2.3"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M12 3.5V12M7.2 6.5a7.5 7.5 0 1 0 9.6 0"/></symbol>
+    <symbol id="i-swap" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="M4 8h13l-3.5-3.5M20 16H7l3.5 3.5"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10Z"/></symbol>
+  </defs>
+</svg>
+
+<div class="mockbar">
+  <div class="grp"><span>Sidebar-Markierung</span>
+    <button data-set-nav="tint" class="on">A · Getönt (Vorschlag)</button>
+    <button data-set-nav="surface">B · Fläche</button>
+    <button data-set-nav="current">Aktuell (Balken)</button>
+  </div>
+  <div class="grp"><span>Fensterbreite</span>
+    <button data-set-w="900">900</button>
+    <button data-set-w="1180">1180</button>
+    <button data-set-w="1440" class="on">1440</button>
+    <button data-set-w="1920">1920</button>
+  </div>
+  <div class="grp"><span>Thema</span>
+    <button data-set-theme="light" class="on">Hell</button>
+    <button data-set-theme="dark">Dunkel</button>
+  </div>
+  <span class="note" id="note"></span>
+</div>
+
+<div class="stage">
+<div class="window" id="win">
+  <div class="titlebar">Briqwall<span class="sp"></span><span class="wc">—</span><span class="wc">▢</span><span class="wc">✕</span></div>
+  <div class="app">
+    <nav class="nav">
+      <div class="brand"><div class="brand-mark"><svg width="18" height="18"><use href="#i-shield-check"/></svg></div><b>Briqwall</b></div>
+      <button class="nav-item active" data-page="overview"><svg width="18" height="18"><use href="#i-home"/></svg><span>Übersicht</span></button>
+      <button class="nav-item" data-page="inbox"><svg width="18" height="18"><use href="#i-bell"/></svg><span>Anfragen</span><span class="count">4</span></button>
+      <button class="nav-item" data-page="apps"><svg width="18" height="18"><use href="#i-grid"/></svg><span>Apps</span></button>
+      <button class="nav-item" data-page="activity"><svg width="18" height="18"><use href="#i-pulse"/></svg><span>Aktivität</span></button>
+      <button class="nav-item" data-page="settings"><svg width="18" height="18"><use href="#i-gear"/></svg><span>Einstellungen</span></button>
+      <div class="nav-foot"><div class="row"><span class="dot"></span><span class="txt">Schutzdienst aktiv</span></div></div>
+    </nav>
+
+    <div class="content">
+    <main class="main">
+
+      <!-- ================================================= OVERVIEW -->
+      <section class="page" id="p-overview"><div class="page-inner">
+        <div class="page-head"><div><h1>Übersicht</h1></div></div>
+        <div class="dash">
+          <div class="main-col">
+            <div class="card hero tone-warn">
+              <div class="hero-icon"><svg width="34" height="34"><use href="#i-shield-check"/></svg></div>
+              <div><h3>Geschützt – Entscheidung offen</h3>
+                <div class="meta"><span><svg width="15" height="15"><use href="#i-shield"/></svg>Stufe „Ausgewogen“</span><span><svg width="15" height="15"><use href="#i-wifi"/></svg>Heimnetz</span></div></div>
+              <div class="actions"><button class="btn danger"><svg width="16" height="16"><use href="#i-lock"/></svg>Notfall-Sperre</button></div>
+            </div>
+            <div class="callout" style="margin-top:0">
+              <svg class="ic" width="20" height="20"><use href="#i-bell"/></svg>
+              <div class="t"><b>4 Apps warten auf Ihre Entscheidung</b><span class="muted">QuickNotes, rundll32, CamViewer … wurden angehalten. Nichts davon ist dringend.</span></div>
+              <button class="btn primary" onclick="go('inbox')">Ansehen</button>
+            </div>
+            <div class="card stats" style="margin-top:0">
+              <div class="stat"><div class="v">30</div><div class="l">Apps mit Netzzugang</div></div>
+              <div class="stat"><div class="v">5</div><div class="l">Apps ohne Netzzugang</div></div>
+              <div class="stat"><div class="v" style="color:var(--warn)">4</div><div class="l">Offene Anfragen</div></div>
+              <div class="stat"><div class="v">27</div><div class="l">Abgewehrte Versuche</div></div>
+            </div>
+            <h2>Schutzstufe</h2>
+            <div class="levels">
+              <button class="level"><div class="top">Entspannt <span class="radio"></span></div><p>Fragt nur bei unsignierten Programmen aus Benutzerordnern.</p></button>
+              <button class="level on"><div class="top">Ausgewogen <span class="rec">Empfohlen</span><span class="radio"></span></div><p>Windows, installierte Software und bekannte Hersteller laufen automatisch.</p></button>
+              <button class="level"><div class="top">Streng <span class="radio"></span></div><p>Nur Windows und signierte installierte Software laufen ohne Rückfrage.</p></button>
+            </div>
+          </div>
+          <aside class="side">
+            <div class="card">
+              <div class="card-head"><b>Netzwerk</b></div>
+              <div class="list-row"><div class="ev-icon accent"><svg width="16" height="16"><use href="#i-wifi"/></svg></div>
+                <div class="grow"><div class="ellipsis" style="font-weight:600">Home WiFi</div><div class="faint">Freigaben im Heimnetz erlaubt</div></div></div>
+              <div class="list-row" style="justify-content:flex-end"><div class="seg"><button>Öffentlich</button><button class="on">Heimnetz</button></div></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><b>Zuletzt</b><button class="link" onclick="go('activity')">Alle anzeigen</button></div>
+              <div class="list-row"><div class="ev-icon danger"><svg width="15" height="15"><use href="#i-block"/></svg></div><div class="grow ellipsis">rundll32 angehalten → 45.133.1.20</div><span class="time">09:52</span></div>
+              <div class="list-row"><div class="ev-icon danger"><svg width="15" height="15"><use href="#i-block"/></svg></div><div class="grow ellipsis">CamViewer angehalten → 192.168.1.40</div><span class="time">09:51</span></div>
+              <div class="list-row"><div class="ev-icon accent"><svg width="15" height="15"><use href="#i-gear"/></svg></div><div class="grow ellipsis">Visual Studio Code: Regel geändert</div><span class="time">09:49</span></div>
+              <div class="list-row"><div class="ev-icon warn"><svg width="15" height="15"><use href="#i-bell"/></svg></div><div class="grow ellipsis">QuickNotes fragt nach Netzzugang</div><span class="time">09:48</span></div>
+              <div class="list-row"><div class="ev-icon ok"><svg width="15" height="15"><use href="#i-check"/></svg></div><div class="grow ellipsis">Discord automatisch erlaubt</div><span class="time">09:44</span></div>
+              <div class="list-row"><div class="ev-icon accent"><svg width="15" height="15"><use href="#i-shield"/></svg></div><div class="grow ellipsis">Briqwall 0.2.0 gestartet</div><span class="time">09:41</span></div>
+            </div>
+          </aside>
+        </div>
+      </div></section>
+
+      <!-- ================================================= REQUESTS -->
+      <section class="page" id="p-inbox" hidden><div class="page-inner">
+        <div class="page-head"><div><h1>Anfragen</h1><p>Diese Apps kennt Briqwall noch nicht. Ihre Verbindungen bleiben blockiert, bis Sie entscheiden.</p></div><span class="sp"></span><button class="btn ghost">Alle auswählen</button></div>
+        <span class="annot"><svg width="13" height="13"><use href="#i-info"/></svg>Ab ca. 1280 px Inhaltsbreite stehen die Karten zweispaltig.</span>
+        <div class="req-grid">
+          <article class="card req risk-high">
+            <div class="req-head"><div class="avatar" style="background:#7c5cd6">Q</div>
+              <div class="grow"><h3>QuickNotes</h3><div class="faint ellipsis">C:\Users\alex\AppData\Local\Programs\QuickNotes\QuickNotes.exe</div><div class="req-tags"><span class="badge danger"><svg width="12" height="12"><use href="#i-alert"/></svg>Hohes Risiko</span><span class="badge warn">Nicht signiert</span><span class="badge ">Benutzerordner</span></div></div></div>
+            <div class="why"><span class="k">Warum fragt Briqwall?</span><span>Nicht signiert und in einem Ordner, in den jedes Programm schreiben kann. Wenn Sie QuickNotes selbst installiert haben, können Sie es bedenkenlos erlauben.</span><span class="faint">Wollte zu 185.199.108.153:443 (HTTPS) · 4 Versuche · vor 3 Min.</span></div>
+            
+            <div class="req-actions"><button class="btn danger-solid">Blockieren</button><span class="split"><button class="btn split-main">Erlauben</button><button class="btn split-toggle"><svg width="14" height="14"><use href="#i-chev"/></svg></button></span><span class="sp"></span><button class="btn ghost">Später</button></div>
+          </article>
+          <article class="card req risk-high">
+            <div class="req-head"><div class="avatar" style="background:#2563eb">r</div>
+              <div class="grow"><h3>rundll32</h3><div class="faint ellipsis">C:\Windows\System32\rundll32.exe</div><div class="req-tags"><span class="badge danger"><svg width="12" height="12"><use href="#i-alert"/></svg>Hohes Risiko</span><span class="badge ok"><svg width="12" height="12"><use href="#i-check"/></svg>Signiert · Microsoft Windows</span><span class="badge ">Systemwerkzeug</span></div></div></div>
+            <div class="why"><span class="k">Warum fragt Briqwall?</span><span>Ein Windows-Werkzeug, das beliebige DLLs ausführt – entscheidend ist, wer es gestartet hat.</span><span class="faint">Wollte zu 45.133.1.20:443 (HTTPS) · 3 Versuche · vor 2 Min.</span></div>
+            <div class="origin"><span class="k">Ausgelöst von</span><div class="origin-item"><div class="chain"><span class="proc">explorer.exe</span><span class="sep">›</span><span class="proc bad">WINWORD.EXE</span><span class="sep">›</span><span class="proc me">rundll32.exe</span><span class="faint">· PID 8412 · 3 Versuche · vor 2 Min.</span></div><code class="cmd">rundll32.exe C:\Users\alex\AppData\Local\Temp\upd4512.dll,Start</code></div><div class="origin-warn"><svg width="14" height="14"><use href="#i-alert"/></svg>Gestartet von WINWORD.EXE – Office-Programme starten normalerweise keine Systemwerkzeuge.</div></div>
+            <div class="req-actions"><button class="btn danger-solid">Blockieren</button><span class="split"><button class="btn split-main">Erlauben</button><button class="btn split-toggle"><svg width="14" height="14"><use href="#i-chev"/></svg></button></span><span class="sp"></span><button class="btn ghost">Später</button></div>
+          </article>
+          <article class="card req">
+            <div class="req-head"><div class="avatar" style="background:#d9822b">C</div>
+              <div class="grow"><h3>CamViewer</h3><div class="faint ellipsis">C:\Program Files\CamViewer\CamViewer.exe</div><div class="req-tags"><span class="badge warn"><svg width="12" height="12"><use href="#i-info"/></svg>Mittleres Risiko</span><span class="badge ok"><svg width="12" height="12"><use href="#i-check"/></svg>Signiert · Lumen Vision Ltd.</span></div></div></div>
+            <div class="why"><span class="k">Warum fragt Briqwall?</span><span>Signiert, aber von einem Hersteller, den Briqwall noch nicht kennt. Wenn Sie erlauben, vertraut Briqwall künftig auch Updates dieses Herstellers.</span><span class="faint">Wollte zu 192.168.1.40:9000 (lokales Netz) · 12 Versuche · vor 1 Min.</span></div>
+            
+            <div class="req-actions"><span class="split"><button class="btn primary split-main">Erlauben</button><button class="btn primary split-toggle"><svg width="14" height="14"><use href="#i-chev"/></svg></button></span><button class="btn danger">Blockieren</button><span class="sp"></span><button class="btn ghost">Später</button></div>
+          </article>
+          <article class="card req">
+            <div class="req-head"><div class="avatar" style="background:#3a7bd5">c</div>
+              <div class="grow"><h3>curl</h3><div class="faint ellipsis">C:\Program Files\Git\mingw64\bin\curl.exe</div><div class="req-tags"><span class="badge warn"><svg width="12" height="12"><use href="#i-info"/></svg>Mittleres Risiko</span><span class="badge ok"><svg width="12" height="12"><use href="#i-check"/></svg>Signiert · Git Community</span><span class="badge ">Systemwerkzeug</span></div></div></div>
+            <div class="why"><span class="k">Warum fragt Briqwall?</span><span>Ein Werkzeug, das Angreifer gern zum Nachladen von Schadcode missbrauchen. Erlauben Sie es, wenn Sie es gerade selbst benutzen.</span><span class="faint">Wollte zu 104.20.23.154:443 (HTTPS) · 2 Versuche · vor 6 Min.</span></div>
+            <div class="origin compact"><span class="k">Ausgelöst von</span><div class="origin-item"><div class="chain"><span class="proc">WindowsTerminal.exe</span><span class="sep">›</span><span class="proc">pwsh.exe</span><span class="sep">›</span><span class="proc me">curl.exe</span><span class="faint">· PID 2208 · vor 6 Min.</span></div></div></div>
+            <div class="req-actions"><span class="split"><button class="btn primary split-main">Für 1 Stunde erlauben</button><button class="btn primary split-toggle"><svg width="14" height="14"><use href="#i-chev"/></svg></button></span><button class="btn danger">Blockieren</button><span class="sp"></span><button class="btn ghost">Später</button></div>
+          </article>
+        </div>
+      </div></section>
+
+      <!-- ================================================= APPS -->
+      <section class="page" id="p-apps" hidden><div class="page-inner">
+        <div class="page-head"><div><h1>Apps</h1><p>Alle Programme, die Briqwall gesehen hat, und wie es entschieden hat.</p></div></div>
+        <div class="toolbar">
+          <label class="search"><svg width="16" height="16"><use href="#i-search"/></svg><input class="input" placeholder="App oder Pfad suchen"></label>
+          <button class="chip on">Alle</button><button class="chip">Erlaubt</button><button class="chip">Blockiert</button><button class="chip">Eigene Regeln</button>
+        </div>
+        <span class="annot overlay-hint"><svg width="13" height="13"><use href="#i-info"/></svg>Schmales Fenster: Details öffnen sich wie bisher als Panel über der Liste.</span>
+        <div class="apps-split has-sel">
+          <div class="card table">
+            <div class="thead"><span>App</span><span class="col-pub">Herausgeber</span><span>Herkunft</span><span>Internet</span><span>Eingehend</span><span>Zuletzt</span></div>
+            <div class="trow"><div class="appcell"><div class="avatar sm" style="background:#d9822b">C</div><div class="t"><b class="ellipsis">CamViewer</b><div class="faint ellipsis">C:\Program Files\CamViewer</div></div></div><span class="col-pub ellipsis">Lumen Vision Ltd.</span><span><span class="badge">Installiert</span></span><span class="state warn"><i></i>Wartet</span><span class="state muted"><i></i>Blockiert</span><span class="time">vor 1 Min.</span></div>
+            <div class="trow"><div class="appcell"><div class="avatar sm" style="background:#3a7bd5">c</div><div class="t"><b class="ellipsis">curl</b><div class="faint ellipsis">C:\Program Files\Git\mingw64\bin</div></div></div><span class="col-pub ellipsis">Git Community</span><span><span class="badge">Systemwerkzeug</span></span><span class="state warn"><i></i>Wartet</span><span class="state muted"><i></i>Blockiert</span><span class="time">vor 6 Min.</span></div>
+            <div class="trow sel"><div class="appcell"><div class="avatar sm" style="background:#5b6ee1">D</div><div class="t"><b class="ellipsis">Discord</b><div class="faint ellipsis">C:\Users\alex\AppData\Local\Discord\app-1.0.9187</div></div></div><span class="col-pub ellipsis">Discord Inc.</span><span><span class="badge">Benutzerordner</span></span><span class="state ok"><i></i>Erlaubt</span><span class="state muted"><i></i>Blockiert</span><span class="time">gerade eben</span></div>
+            <div class="trow"><div class="appcell"><div class="avatar sm" style="background:#e66000">F</div><div class="t"><b class="ellipsis">Firefox</b><div class="faint ellipsis">C:\Program Files\Mozilla Firefox</div></div></div><span class="col-pub ellipsis">Mozilla Corporation</span><span><span class="badge">Installiert</span></span><span class="state ok"><i></i>Erlaubt</span><span class="state muted"><i></i>Blockiert</span><span class="time">gerade eben</span></div>
+            <div class="trow"><div class="appcell"><div class="avatar sm" style="background:#2b8a5b">G</div><div class="t"><b class="ellipsis">Google Chrome</b><div class="faint ellipsis">C:\Program Files\Google\Chrome\Application</div></div></div><span class="col-pub ellipsis">Google LLC</span><span><span class="badge">Installiert</span></span><span class="state ok"><i></i>Erlaubt</span><span class="state muted"><i></i>Blockiert</span><span class="time">gerade eben</span></div>
+            <div class="trow"><div class="appcell"><div class="avatar sm" style="background:#2563eb">H</div><div class="t"><b class="ellipsis">Hostprozess für Windows-Dienste</b><div class="faint ellipsis">C:\Windows\System32</div></div></div><span class="col-pub ellipsis">Microsoft Windows</span><span><span class="badge">Windows</span></span><span class="state ok"><i></i>Erlaubt</span><span class="state muted"><i></i>Blockiert</span><span class="time">gerade eben</span></div>
+            <div class="trow"><div class="appcell"><div class="avatar sm" style="background:#7c5cd6">Q</div><div class="t"><b class="ellipsis">QuickNotes</b><div class="faint ellipsis">C:\Users\alex\AppData\Local\Programs\QuickNotes</div></div></div><span class="col-pub ellipsis">—</span><span><span class="badge">Benutzerordner</span></span><span class="state warn"><i></i>Wartet</span><span class="state muted"><i></i>Blockiert</span><span class="time">vor 3 Min.</span></div>
+            <div class="trow"><div class="appcell"><div class="avatar sm" style="background:#2563eb">r</div><div class="t"><b class="ellipsis">rundll32</b><div class="faint ellipsis">C:\Windows\System32</div></div></div><span class="col-pub ellipsis">Microsoft Windows</span><span><span class="badge">Systemwerkzeug</span></span><span class="state warn"><i></i>Wartet</span><span class="state muted"><i></i>Blockiert</span><span class="time">vor 2 Min.</span></div>
+            <div class="trow"><div class="appcell"><div class="avatar sm" style="background:#1db954">S</div><div class="t"><b class="ellipsis">Spotify</b><div class="faint ellipsis">C:\Users\alex\AppData\Roaming\Spotify</div></div></div><span class="col-pub ellipsis">Spotify AB</span><span><span class="badge">Benutzerordner</span></span><span class="state ok"><i></i>Erlaubt</span><span class="state muted"><i></i>Blockiert</span><span class="time">vor 4 Min.</span></div>
+            <div class="trow"><div class="appcell"><div class="avatar sm" style="background:#1b2838">S</div><div class="t"><b class="ellipsis">Steam</b><div class="faint ellipsis">C:\Program Files (x86)\Steam</div></div></div><span class="col-pub ellipsis">Valve Corp.</span><span><span class="badge">Installiert</span></span><span class="state ok"><i></i>Erlaubt</span><span class="state accent"><i></i>Nur LAN</span><span class="time">vor 1 Std.</span></div>
+            <div class="trow"><div class="appcell"><div class="avatar sm" style="background:#0f7b6c">V</div><div class="t"><b class="ellipsis">Visual Studio Code</b><div class="faint ellipsis">C:\Users\alex\AppData\Local\Programs\Microsoft VS Code</div></div></div><span class="col-pub ellipsis">Microsoft Corporation</span><span><span class="badge">Benutzerordner</span></span><span class="state ok"><i></i>Erlaubt</span><span class="state accent"><i></i>Nur LAN</span><span class="time">vor 12 Min.</span></div>
+            <div class="trow"><div class="appcell"><div class="avatar sm" style="background:#2563eb">W</div><div class="t"><b class="ellipsis">Windows PowerShell</b><div class="faint ellipsis">C:\Windows\System32\WindowsPowerShell\v1.0</div></div></div><span class="col-pub ellipsis">Microsoft Windows</span><span><span class="badge">Systemwerkzeug</span></span><span class="state danger"><i></i>Blockiert</span><span class="state muted"><i></i>Blockiert</span><span class="time">gestern</span></div>
+            <div class="trow"><div class="appcell"><div class="avatar sm" style="background:#2d8cff">Z</div><div class="t"><b class="ellipsis">Zoom</b><div class="faint ellipsis">C:\Users\alex\AppData\Roaming\Zoom\bin</div></div></div><span class="col-pub ellipsis">Zoom Video Communications</span><span><span class="badge">Benutzerordner</span></span><span class="state ok"><i></i>Erlaubt</span><span class="state muted"><i></i>Blockiert</span><span class="time">vor 2 Tagen</span></div>
+          </div>
+          <aside class="docked">
+            <div class="drawer-head">
+              <div class="avatar" style="background:#d9822b">D</div>
+              <div style="flex:1;min-width:0"><h3 style="margin:0;font:600 17px var(--font-display)">Discord</h3><div class="faint">Discord Inc.</div></div>
+              <button class="btn ghost sm"><svg width="16" height="16"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="drawer-body">
+              <div class="field"><span class="label">Internet (ausgehend)</span>
+                <div class="seg" style="display:flex"><button class="on" style="flex:1">Automatisch</button><button style="flex:1">Erlauben</button><button style="flex:1">Nur LAN</button><button style="flex:1">Blockieren</button></div>
+                <span class="faint">Automatisch: erlaubt – signiert vom bekannten Herausgeber „Discord Inc.“.</span></div>
+              <div class="field"><span class="label">Eingehende Verbindungen</span>
+                <div class="seg" style="display:flex"><button class="on" style="flex:1">Automatisch</button><button style="flex:1">Erlauben</button><button style="flex:1">Nur LAN</button><button style="flex:1">Blockieren</button></div>
+                <span class="faint">Automatisch: blockiert</span></div>
+              <dl class="kv"><dt>Pfad</dt><dd class="mono">C:\Users\alex\AppData\Local\Discord\app-1.0.9187\Discord.exe</dd><dt>Herkunft</dt><dd>Benutzerordner</dd><dt>Risiko</dt><dd><span class="badge ok">Gering</span></dd><dt>Zuletzt aktiv</dt><dd>gerade eben</dd></dl>
+            </div>
+          </aside>
+        </div>
+      </div></section>
+
+      <!-- ================================================= ACTIVITY -->
+      <section class="page" id="p-activity" hidden><div class="page-inner">
+        <div class="page-head"><div><h1>Aktivität</h1><p>Was Briqwall getan hat. Wiederholte Versuche werden zusammengefasst.</p></div></div>
+        <div class="toolbar"><button class="chip on">Alles</button><button class="chip">Blockierungen</button><button class="chip">Entscheidungen</button></div>
+        <div class="act">
+          <div>
+            <div class="day" style="margin-top:4px">Heute</div>
+            <div class="card">
+              <div class="list-row"><div class="ev-icon danger"><svg width="15" height="15"><use href="#i-block"/></svg></div><div class="grow"><div class="ellipsis">rundll32 angehalten → 45.133.1.20:443 (HTTPS)</div><div class="faint">Wartet auf Ihre Entscheidung</div></div><span class="time">09:52</span></div>
+              <div class="list-row"><div class="ev-icon danger"><svg width="15" height="15"><use href="#i-block"/></svg></div><div class="grow"><div class="ellipsis">CamViewer angehalten → 192.168.1.40:9000</div><div class="faint">Wartet auf Ihre Entscheidung</div></div><span class="time">09:51</span></div>
+              <div class="list-row"><div class="ev-icon accent"><svg width="15" height="15"><use href="#i-gear"/></svg></div><div class="grow"><div class="ellipsis">Visual Studio Code: Regel geändert</div><div class="faint">Ausgehend: Automatisch, eingehend: Nur LAN</div></div><span class="time">09:49</span></div>
+              <div class="list-row"><div class="ev-icon warn"><svg width="15" height="15"><use href="#i-bell"/></svg></div><div class="grow"><div class="ellipsis">QuickNotes fragt nach Netzzugang</div><div class="faint">Hohes Risiko</div></div><span class="time">09:48</span></div>
+              <div class="list-row"><div class="ev-icon danger"><svg width="15" height="15"><use href="#i-block"/></svg></div><div class="grow"><div class="ellipsis">Hostprozess für Windows-Dienste: eingehend blockiert ← 203.0.113.24:3389 (RDP)</div><div class="faint">Unaufgeforderte Verbindung</div></div><span class="time">09:46</span></div>
+              <div class="list-row"><div class="ev-icon ok"><svg width="15" height="15"><use href="#i-check"/></svg></div><div class="grow"><div class="ellipsis">Discord automatisch erlaubt</div><div class="faint">Signiert vom bekannten Herausgeber „Discord Inc.“</div></div><span class="time">09:44</span></div>
+              <div class="list-row"><div class="ev-icon accent"><svg width="15" height="15"><use href="#i-shield"/></svg></div><div class="grow"><div class="ellipsis">Briqwall 0.2.0 gestartet</div><div class="faint">Stufe „Ausgewogen“</div></div><span class="time">09:41</span></div>
+            </div>
+          </div>
+          <aside class="summary">
+            <div class="card"><div class="card-head"><b>Heute</b></div>
+              <div class="kpi"><div><b>27</b><span>abgewehrt</span></div><div><b>4</b><span>Anfragen</span></div><div><b>2</b><span>Entscheidungen</span></div></div></div>
+            <div class="card pad"><b style="font:600 14.5px var(--font-display)">Am häufigsten blockiert</b>
+              <div style="margin-top:10px;display:grid;gap:10px">
+                <div><div style="display:flex;justify-content:space-between"><span>CamViewer</span><span class="faint">12</span></div><div class="bar"><i style="width:100%"></i></div></div>
+                <div><div style="display:flex;justify-content:space-between"><span>rundll32</span><span class="faint">5</span></div><div class="bar"><i style="width:42%"></i></div></div>
+                <div><div style="display:flex;justify-content:space-between"><span>QuickNotes</span><span class="faint">4</span></div><div class="bar"><i style="width:33%"></i></div></div>
+                <div><div style="display:flex;justify-content:space-between"><span>curl</span><span class="faint">2</span></div><div class="bar"><i style="width:17%"></i></div></div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </div></section>
+
+      <!-- ================================================= SETTINGS -->
+      <section class="page read" id="p-settings" hidden style="margin:0 auto">
+        <div class="page-head"><div><h1>Einstellungen</h1></div></div>
+        <span class="annot"><svg width="13" height="13"><use href="#i-info"/></svg>Bleibt bewusst bei max. 900 px Breite – lange Zeilen lesen sich schlecht.</span>
+        <h2 style="margin-top:4px">Allgemein</h2>
+        <div class="card">
+          <div class="setting"><div class="ic"><svg width="18" height="18"><use href="#i-globe"/></svg></div><div class="grow"><b>Sprache</b><span class="faint">„System“ folgt der Anzeigesprache von Windows (derzeit Deutsch).</span></div><div class="seg"><button class="on">System</button><button>Deutsch</button><button>English</button></div></div>
+          <div class="setting"><div class="ic"><svg width="18" height="18"><use href="#i-moon"/></svg></div><div class="grow"><b>Darstellung</b><span class="faint">Folgt standardmäßig Windows</span></div><div class="seg"><button class="on">System</button><button>Hell</button><button>Dunkel</button></div></div>
+          <div class="setting"><div class="ic"><svg width="18" height="18"><use href="#i-bell"/></svg></div><div class="grow"><b>Benachrichtigen, wenn eine App wartet</b><span class="faint">Dezente Windows-Benachrichtigung, keine Pop-ups</span></div><button class="switch on"></button></div>
+          <div class="setting"><div class="ic"><svg width="18" height="18"><use href="#i-power"/></svg></div><div class="grow"><b>Mit Windows starten</b><span class="faint">Startet unsichtbar im Infobereich.</span></div><button class="switch on"></button></div>
+        </div>
+        <h2>Sicherheit</h2>
+        <div class="card"><div class="setting"><div class="ic"><svg width="18" height="18"><use href="#i-fingerprint"/></svg></div><div class="grow"><b>Freigaben mit Windows Hello bestätigen</b><span class="faint">Aktiv: Erlauben bestätigen Sie mit Fingerabdruck, Gesicht oder PIN.</span></div><button class="btn ghost sm">Deaktivieren</button></div></div>
+      </section>
+
+    </main>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+  const root = document.documentElement;
+  root.dataset.nav = "tint";
+  const win = document.getElementById("win");
+  const note = document.getElementById("note");
+  const notes = {
+    900: "Kompakt: Navigation nur mit Icons, eine Spalte.",
+    1180: "Standard: wie heute, eine Spalte.",
+    1440: "Breit: Dashboard mit Seitenspalte, Apps mit angedocktem Detailbereich.",
+    1920: "Full HD: alle Spalten inkl. Herausgeber, Anfragen zweispaltig.",
+  };
+  function setW(w) {
+    win.style.setProperty("--win-w", w + "px");
+    document.querySelectorAll("[data-set-w]").forEach((b) => b.classList.toggle("on", b.dataset.setW == w));
+    note.textContent = notes[w];
+  }
+  function go(id) {
+    document.querySelectorAll(".page").forEach((p) => (p.hidden = p.id !== "p-" + id));
+    document.querySelectorAll(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.page === id));
+    document.querySelector(".main").scrollTop = 0;
+  }
+  document.querySelectorAll(".nav-item").forEach((n) => n.addEventListener("click", () => go(n.dataset.page)));
+  document.querySelectorAll("[data-set-nav]").forEach((b) => b.addEventListener("click", () => {
+    root.dataset.nav = b.dataset.setNav;
+    document.querySelectorAll("[data-set-nav]").forEach((x) => x.classList.toggle("on", x === b));
+  }));
+  document.querySelectorAll("[data-set-w]").forEach((b) => b.addEventListener("click", () => setW(+b.dataset.setW)));
+  document.querySelectorAll("[data-set-theme]").forEach((b) => b.addEventListener("click", () => {
+    root.dataset.theme = b.dataset.setTheme;
+    document.querySelectorAll("[data-set-theme]").forEach((x) => x.classList.toggle("on", x === b));
+  }));
+  const q = new URLSearchParams(location.search);
+  setW(+(q.get("w") || 1440));
+  if (q.get("nav")) document.querySelector(`[data-set-nav="${q.get("nav")}"]`)?.click();
+  if (q.get("theme")) document.querySelector(`[data-set-theme="${q.get("theme")}"]`)?.click();
+  if (q.get("page")) go(q.get("page"));
+</script>
+</body>
+</html>
