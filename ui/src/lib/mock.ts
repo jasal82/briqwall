@@ -229,7 +229,7 @@ export function createMock(): Backend {
   let seq = 0;
   const events: XEvent[] = [];
   const push = (kind: XEvent["kind"], ago = 0) => events.push({ seq: ++seq, time: t() - ago, kind });
-  push({ Started: { version: "0.9.0", mode: "Balanced" } }, 600);
+  push({ Started: { version: "0.10.0", mode: "Balanced" } }, 600);
   push({ AutoAllowed: { key: "discord", name: "Discord", reason: { KnownPublisher: "Discord Inc." } } }, 420);
   push({ Blocked: { key: "curl", name: "curl", remote: "104.20.23.154:443 (HTTPS)", host: "api.example.com", direction: "Out", by_rule: false } }, 360);
   push({ NewRequest: { key: "curl", name: "curl", risk: "Medium" } }, 359);
@@ -241,7 +241,7 @@ export function createMock(): Backend {
   push({ Blocked: { key: "camviewer", name: "CamViewer", remote: "192.168.1.40:9000", direction: "Out", by_rule: false } }, 60);
 
   const status: Status = {
-    version: "0.9.0",
+    version: "0.10.0",
     mode: "Balanced",
     engine_ok: true,
     engine_error: null,

@@ -31,7 +31,8 @@ const shots = [
          card.querySelector('.origin .link')?.click();
          document.querySelector('.main').scrollTop = card.offsetTop - 24;`,
   },
-  { file: "apps.png", query: "page=apps&app=Discord" },
+  // Wider, so the details dock beside the list and "Add program" is visible.
+  { file: "apps.png", query: "page=apps&app=Discord", width: 1440 },
   { file: "activity.png", query: "page=activity" },
   { file: "settings.png", query: "page=settings" },
   { file: "overview-dark.png", query: "page=overview&theme=dark", dark: true },
@@ -95,6 +96,12 @@ try {
   mkdirSync(OUT, { recursive: true });
 
   for (const s of shots) {
+    await call("Emulation.setDeviceMetricsOverride", {
+      width: s.width ?? WIDTH,
+      height: s.height ?? HEIGHT,
+      deviceScaleFactor: SCALE,
+      mobile: false,
+    });
     await call("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: s.dark ? "dark" : "light" }] });
     const done = new Promise((r) => loaded.push(r));
     await call("Page.navigate", { url: `${BASE}/?lang=en&${s.query}` });

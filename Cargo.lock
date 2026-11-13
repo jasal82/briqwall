@@ -165,7 +165,7 @@ dependencies = [
 
 [[package]]
 name = "briqwall"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "briqwall-common",
@@ -179,7 +179,7 @@ dependencies = [
 
 [[package]]
 name = "briqwall-common"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "briqwall-service"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "briqwall-common",
