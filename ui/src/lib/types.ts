@@ -54,6 +54,8 @@ export interface AppInfo {
   blocked_count: number;
   inbound_blocked_count: number;
   last_remote: string | null;
+  /** Name looked up for the last blocked attempt (service keeps it in memory only). */
+  last_host?: string | null;
   rule: UserRule | null;
   auto_out: Access;
   auto_in: Access;
@@ -116,11 +118,12 @@ export interface Status {
   started: number;
   revision: number;
   settings: Settings;
-  hello_enrolled: boolean;
+  /** Accounts with a Windows Hello key; an empty sid is a key from before per-account enrollment. */
+  hello_users: HelloUser[];
 }
 
 export type EventKind =
-  | { Blocked: { key: string; name: string; remote: string; direction: Direction; by_rule: boolean } }
+  | { Blocked: { key: string; name: string; remote: string; host?: string | null; direction: Direction; by_rule: boolean } }
   | { NewRequest: { key: string; name: string; risk: Risk } }
   | { AutoAllowed: { key: string; name: string; reason: Reason } }
   | { RuleChanged: { key: string; name: string; rule: UserRule | null } }
@@ -149,7 +152,12 @@ export type Request =
   | { SetNetworkTrust: { id: string; trusted: boolean | null } }
   | { SetOptions: { lan_discovery: boolean | null; learn_publishers: boolean | null } }
   | { RemovePublisher: string }
-  | "RemoveHello";
+  | { RemoveHello: { sid: string } };
+
+export interface HelloUser {
+  sid: string;
+  name: string;
+}
 
 export interface ConnState {
   connected: boolean;
@@ -170,6 +178,9 @@ export interface UiPrefs {
   language: "system" | "de" | "en";
   /** What "system" resolves to. */
   system_language: "de" | "en";
+  /** Windows account this UI runs as. */
+  user_sid: string;
+  user_name: string;
 }
 
 /** Outcome of picking a program in the file dialog. */

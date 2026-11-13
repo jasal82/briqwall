@@ -27,9 +27,34 @@ pub struct State {
     /// We enabled WFP audit events and should turn them off on uninstall.
     #[serde(default)]
     pub audit_enabled_by_us: bool,
-    /// Public key (hex SPKI) of the Windows Hello credential used to sign approvals.
+    /// Public keys (hex SPKI) of the Windows Hello credentials that may sign
+    /// approvals, one per Windows account.
     #[serde(default)]
+    pub hello_keys: Vec<HelloKey>,
+    /// Single key of versions before per-account enrollment. Read once and
+    /// moved into `hello_keys` (see [`State::migrate`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hello_key: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct HelloKey {
+    /// Empty for a key taken over from before per-account enrollment.
+    #[serde(default)]
+    pub sid: String,
+    #[serde(default)]
+    pub name: String,
+    pub key: String,
+}
+
+impl State {
+    /// Move a single pre-existing Hello key into the per-account list. It
+    /// keeps working; it just has no account attached to it.
+    pub fn migrate(&mut self) {
+        if let Some(key) = self.hello_key.take() {
+            self.hello_keys.push(HelloKey { sid: String::new(), name: String::new(), key });
+        }
+    }
 }
 
 pub fn data_dir(elevated: bool) -> PathBuf {
@@ -93,8 +118,11 @@ fn set_sddl(path: &Path, sddl: &str) -> Result<()> {
 pub fn load(dir: &Path) -> State {
     let path = dir.join("state.json");
     match std::fs::read(&path) {
-        Ok(bytes) => match serde_json::from_slice(&bytes) {
-            Ok(s) => s,
+        Ok(bytes) => match serde_json::from_slice::<State>(&bytes) {
+            Ok(mut s) => {
+                s.migrate();
+                s
+            }
             Err(e) => {
                 log::error!("state.json unlesbar ({e}); Sicherung angelegt, starte neu");
                 let _ = std::fs::copy(&path, dir.join("state.corrupt.json"));

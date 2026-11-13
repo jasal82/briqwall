@@ -58,6 +58,10 @@ pub struct Core {
     /// Recent process origins of blocked attempts per app (memory only:
     /// command lines can contain private data and are never written to disk).
     origins: HashMap<String, Vec<ProcessOrigin>>,
+    /// Address and name of the last blocked attempt per app (memory only,
+    /// see [`crate::dns`]).
+    last_hosts: HashMap<String, String>,
+    last_ips: HashMap<String, std::net::IpAddr>,
 }
 
 impl Core {
@@ -98,6 +102,8 @@ impl Core {
             defer_apply: true,
             challenges: HashMap::new(),
             origins: HashMap::new(),
+            last_hosts: HashMap::new(),
+            last_ips: HashMap::new(),
         };
         core.observe_pseudo("System", &wfp::system_app_id());
         // Evaluate everything that is already running *before* the first rebuild,
@@ -136,6 +142,7 @@ impl Core {
             while let Ok(msg) = rx.try_recv() {
                 if matches!(msg, Msg::Shutdown) {
                     self.save();
+                    crate::dns::stop();
                     return;
                 }
                 self.handle(msg);
@@ -143,6 +150,7 @@ impl Core {
             self.tick();
         }
         self.save();
+        crate::dns::stop();
         log::info!("Kern beendet");
     }
 
@@ -180,6 +188,19 @@ impl Core {
                 self.apply_app(&key);
             }
         }
+        // DNS events arrive about a second after the block; once the name for
+        // a blocked attempt is known, let the UI know there is something new.
+        let resolved: Vec<(String, String)> = self
+            .last_ips
+            .iter()
+            .filter(|(key, _)| !self.last_hosts.contains_key(*key))
+            .filter_map(|(key, ip)| crate::dns::lookup(*ip).map(|h| (key.clone(), h)))
+            .collect();
+        if !resolved.is_empty() {
+            self.last_hosts.extend(resolved);
+            self.revision += 1;
+        }
+
         if self.last_net_check.elapsed() > Duration::from_secs(5) {
             self.refresh_networks(true);
         }
@@ -316,6 +337,7 @@ impl Core {
             file_stamp: f.stamp,
             raw_app_id: None,
             origins: Vec::new(),
+            last_host: None,
         };
         self.evaluate(&mut app);
         log::debug!("Neue App {} → {:?} ({:?})", app.path, app.effective_out, app.reason);
@@ -362,6 +384,7 @@ impl Core {
             file_stamp: None,
             raw_app_id: Some(blob.to_vec()),
             origins: Vec::new(),
+            last_host: None,
         };
         self.evaluate(&mut app);
         self.state.apps.insert(key.clone(), app);
@@ -437,6 +460,8 @@ impl Core {
             None => "unbekannt".into(),
         };
 
+        let host = evt.remote.and_then(crate::dns::lookup);
+
         let now = now_secs();
         let mut new_request = None;
         let name;
@@ -448,6 +473,14 @@ impl Core {
                     app.blocked_count = app.blocked_count.saturating_add(1);
                     app.last_blocked = Some(now);
                     app.last_remote = Some(remote.clone());
+                    match &host {
+                        Some(h) => self.last_hosts.insert(key.clone(), h.clone()),
+                        None => self.last_hosts.remove(&key),
+                    };
+                    match evt.remote {
+                        Some(ip) => self.last_ips.insert(key.clone(), ip),
+                        None => self.last_ips.remove(&key),
+                    };
                     let snoozed = app.snoozed_until.is_some_and(|t| now < t);
                     if !by_rule && app.effective_out == Access::Ask && !app.pending && !snoozed {
                         app.pending = true;
@@ -466,7 +499,7 @@ impl Core {
         }
         let dkey = format!("{key}|{dir:?}|{remote}");
         if self.coalescer.should_log(&dkey, Duration::from_secs(30)) {
-            self.push(EventKind::Blocked { key, name, remote, direction: dir, by_rule });
+            self.push(EventKind::Blocked { key, name, remote, host, ip: evt.remote, direction: dir, by_rule });
             self.revision += 1;
         }
     }
@@ -714,7 +747,12 @@ impl Core {
             started: self.started,
             revision: self.revision,
             settings: self.state.settings.clone(),
-            hello_enrolled: self.state.hello_key.is_some(),
+            hello_users: self
+                .state
+                .hello_keys
+                .iter()
+                .map(|k| HelloUser { sid: k.sid.clone(), name: k.name.clone() })
+                .collect(),
         }
     }
 
@@ -728,12 +766,29 @@ impl Core {
                     .map(|a| {
                         let mut a = a.clone();
                         a.origins = self.origins.get(&a.key).cloned().unwrap_or_default();
+                        a.last_host = self
+                            .last_hosts
+                            .get(&a.key)
+                            .cloned()
+                            .or_else(|| self.last_ips.get(&a.key).and_then(|ip| crate::dns::lookup(*ip)));
                         a
                     })
                     .collect(),
             ),
             Request::Events { after } => {
-                let v: Vec<Event> = self.events.iter().filter(|e| e.seq > after).cloned().collect();
+                // A name may only have arrived after the block was recorded.
+                let v: Vec<Event> = self
+                    .events
+                    .iter()
+                    .filter(|e| e.seq > after)
+                    .cloned()
+                    .map(|mut e| {
+                        if let EventKind::Blocked { host: host @ None, ip: Some(ip), .. } = &mut e.kind {
+                            *host = crate::dns::lookup(*ip);
+                        }
+                        e
+                    })
+                    .collect();
                 let skip = v.len().saturating_sub(300);
                 Response::Events(v.into_iter().skip(skip).collect())
             }
@@ -773,6 +828,9 @@ impl Core {
                 }
                 self.state.apps.remove(&key);
                 self.app_id_cache.remove(&key);
+                self.origins.remove(&key);
+                self.last_hosts.remove(&key);
+                self.last_ips.remove(&key);
                 if let (Some(engine), Some(ids)) = (&self.engine, self.app_filter_ids.remove(&key)) {
                     let _ = engine.transaction(|e| {
                         ids.iter().for_each(|id| e.delete_filter(*id));
@@ -839,13 +897,16 @@ impl Core {
                 if issued.elapsed() > CHALLENGE_TTL {
                     return Response::Error(ErrorCode::ApprovalExpired);
                 }
-                let Some(key) = self.state.hello_key.clone() else {
+                if self.state.hello_keys.is_empty() {
                     return Response::Error(ErrorCode::HelloNotEnrolled);
-                };
-                if !hello::verify(&key, &approval_message(&nonce, &payload), &signature) {
+                }
+                let message = approval_message(&nonce, &payload);
+                // Any enrolled account may approve; the key says which one it was.
+                let Some(signer) = self.state.hello_keys.iter().find(|k| hello::verify(&k.key, &message, &signature)) else {
                     log::warn!("Ungültige Windows-Hello-Signatur abgewiesen");
                     return Response::Denied;
-                }
+                };
+                let signer = if signer.name.is_empty() { "unbekanntes Konto".to_string() } else { signer.name.clone() };
                 let reqs: Vec<Request> = match serde_json::from_str(&payload) {
                     Ok(r) => r,
                     Err(e) => return Response::Error(ErrorCode::BadRequest(e.to_string())),
@@ -860,27 +921,32 @@ impl Core {
                 if !plain {
                     return Response::Error(ErrorCode::NotApprovableWithHello);
                 }
-                log::info!("{} Änderung(en) per Windows Hello bestätigt", reqs.len());
+                log::info!("{} Änderung(en) per Windows Hello bestätigt ({signer})", reqs.len());
                 self.run_all(reqs, true)
             }
-            Request::EnrollHello { public_key } => {
+            Request::EnrollHello { public_key, sid, name } => {
                 if !privileged {
                     return Response::Denied;
                 }
                 if hello::parse_key(&public_key).is_none() {
                     return Response::Error(ErrorCode::InvalidKey);
                 }
-                self.state.hello_key = Some(public_key);
+                // One key per account: enrolling again replaces the old one.
+                self.state.hello_keys.retain(|k| k.sid != sid);
+                self.state.hello_keys.push(store::HelloKey { sid, name, key: public_key });
                 self.push(EventKind::HelloEnrolled);
                 self.changed();
                 self.save();
                 Response::Ok
             }
-            Request::RemoveHello => {
-                // Tightening: afterwards every loosening change needs UAC again.
-                self.state.hello_key = None;
+            Request::RemoveHello { sid } => {
+                // Tightening: afterwards loosening changes need UAC again. A key
+                // from before per-account enrollment has no owner to compare, so
+                // "switch Hello off" removes that one too.
+                self.state.hello_keys.retain(|k| k.sid != sid && !k.sid.is_empty());
                 self.push(EventKind::HelloRemoved);
                 self.changed();
+                self.save();
                 Response::Ok
             }
         }

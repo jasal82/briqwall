@@ -4,7 +4,7 @@
   import SplitButton from "../lib/SplitButton.svelte";
   import OriginInfo, { suspiciousParent } from "../lib/OriginInfo.svelte";
   import { store } from "../lib/store.svelte";
-  import { ago, categoryLabel, locationLabel, now, publisher, reasonText, riskLabel, riskTone } from "../lib/format";
+  import { ago, categoryLabel, locationLabel, now, publisher, reasonText, riskLabel, riskTone, targetText } from "../lib/format";
   import { t, tn } from "../lib/i18n/index.svelte";
   import type { AppInfo, RuleAccess } from "../lib/types";
 
@@ -86,7 +86,7 @@
     <span>{reasonText(app.reason)}</span>
     {#if app.last_remote}
       <span class="faint">
-        {t("req.wanted", { remote: app.last_remote })}{lanTarget ? ` (${t("req.localNet")})` : ""} · {tn("req.attempts", app.blocked_count)} · {ago(app.last_blocked)}
+        {t("req.wanted", { remote: targetText(app.last_remote, app.last_host) })}{lanTarget ? ` (${t("req.localNet")})` : ""} · {tn("req.attempts", app.blocked_count)} · {ago(app.last_blocked)}
       </span>
     {/if}
   </div>

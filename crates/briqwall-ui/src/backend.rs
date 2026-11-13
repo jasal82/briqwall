@@ -70,6 +70,15 @@ impl Shared {
     }
 }
 
+/// Is *this* Windows account set up for Hello approvals? A key from before
+/// per-account enrollment (no SID) counts, it was this device's single key.
+pub fn hello_enrolled_here(shared: &Shared) -> bool {
+    let sid = platform::current_user().0;
+    shared.snap.lock().unwrap().status.as_ref().is_some_and(|s| {
+        s.hello_users.iter().any(|u| u.sid.is_empty() || u.sid == sid)
+    })
+}
+
 pub fn send(shared: &Shared, req: &Request) -> ActionResult {
     send_many(shared, vec![req.clone()])
 }
@@ -107,7 +116,7 @@ pub fn add_app(shared: &Shared, path: &str) -> AddResult {
 }
 
 fn confirm(shared: &Shared, reqs: Vec<Request>, combined: &Request) -> ActionResult {
-    let enrolled = shared.snap.lock().unwrap().status.as_ref().is_some_and(|s| s.hello_enrolled);
+    let enrolled = hello_enrolled_here(shared);
     if enrolled {
         match approve_with_hello(&reqs) {
             Ok(()) => return ActionResult::Done,
@@ -161,7 +170,8 @@ pub fn enroll_hello(shared: &Shared) -> ActionResult {
         }
         Err(HelloError::Failed(m)) => return ActionResult::Failed { message: m },
     };
-    let r = uac(&Request::EnrollHello { public_key: briqwall_common::util::hex(&spki) });
+    let (sid, name) = platform::current_user();
+    let r = uac(&Request::EnrollHello { public_key: briqwall_common::util::hex(&spki), sid, name });
     if !matches!(r, ActionResult::Done) {
         hello::delete_key();
     }
@@ -170,7 +180,7 @@ pub fn enroll_hello(shared: &Shared) -> ActionResult {
 }
 
 pub fn remove_hello(shared: &Shared) -> ActionResult {
-    let r = send(shared, &Request::RemoveHello);
+    let r = send(shared, &Request::RemoveHello { sid: platform::current_user().0 });
     if matches!(r, ActionResult::Done) {
         hello::delete_key();
     }

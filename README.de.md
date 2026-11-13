@@ -44,6 +44,7 @@ wenigen Rückfragen betreffen genau die Programme, bei denen sie sinnvoll sind.
 | **Inbox statt Pop-up-Flut** | Blockierte, unbekannte Apps landen in einer ruhigen „Anfragen“-Liste mit Klartext-Begründung, Risikostufe und letztem Verbindungsziel. Eine dezente Windows-Benachrichtigung informiert, unterbricht aber nicht. Bei hohem Risiko ist „Blockieren“ die hervorgehobene Option (Nudging zur sicheren Wahl). |
 | **Prozess-Herkunft** | Gemeinsam genutzte Werkzeuge wie `rundll32.exe` oder PowerShell verwenden Windows und Angreifer gleichermaßen. Deshalb zeigt jede Anfrage, **welche Prozessinstanz** den Versuch ausgelöst hat: Kette der Elternprozesse und vollständige **Befehlszeile** (bei rundll32 also DLL und Funktion). Startet ein Office-Programm, PDF-Reader oder Skript-Host das Werkzeug – ein klassisches Makro-Malware-Muster –, warnt Briqwall deutlich und stuft das Risiko hoch. Technisch: WFP-Ereignisse enthalten keine Prozess-ID, das Sicherheitsereignis 5157 schon; ein Cache deckt kurzlebige Prozesse ab. Befehlszeilen bleiben nur im Arbeitsspeicher. |
 | **Regeln im Voraus** | Regeln entstehen nicht nur als Antwort auf eine Anfrage: Über *Apps › Programm hinzufügen* lässt sich ein beliebiges Programm aufnehmen und entscheiden, bevor es zum ersten Mal ins Netz will. Im selben Detailbereich wird eine eigene Regel auch wieder entfernt. |
+| **Namen statt Adressen** | Der Dienst hört die ETW-Ereignisse des DNS-Clients mit und merkt sich, welcher Name zu welcher Adresse aufgelöst wurde. In einer Anfrage steht dann `telemetry.example.com` neben `45.133.1.20:443`. Der Zwischenspeicher liegt nur im Arbeitsspeicher und wird nie auf Platte geschrieben. |
 | **Befristete Freigaben** | „1 Stunde erlauben“ – danach schließt Briqwall die Tür von selbst. Ideal für PowerShell-Sitzungen oder Installer. |
 | **Herausgeber lernen** | Wer eine signierte App dauerhaft erlaubt, erlaubt damit auch ihre Updates (die oft in neuen, versionierten Ordnern landen) und andere Apps desselben Herausgebers. Abschaltbar, Liste jederzeit einsehbar. |
 | **Manipulationserkennung** | Beim Erlauben merkt sich Briqwall die Identität (Herausgeber bzw. SHA-256). Wird die Datei danach ausgetauscht, wird die Freigabe ausgesetzt und erneut gefragt. |
@@ -280,13 +281,12 @@ scripts/          build.ps1 / install.ps1 / uninstall.ps1
   Microsoft-Treibersignatur.
 * **svchost-Dienste** teilen sich eine App-ID. Eine Unterscheidung pro Dienst
   (`FWPM_CONDITION_ALE_USER_ID` mit Service-SID) wäre eine sinnvolle Erweiterung.
-* **Hostnamen** statt IPs in der Aktivitätsliste (DNS-Client-ETW-Ereignisse)
-  würden Anfragen noch verständlicher machen.
 * **Code-Signatur:** Die Release-Pipeline signiert, sobald ein Zertifikat als
   Secret hinterlegt ist. Ohne Zertifikat zeigen SmartScreen und UAC keinen
   verifizierten Herausgeber.
-* **Mehrere Windows-Konten:** Der Hello-Schlüssel gehört dem Konto, das ihn
-  eingerichtet hat. Andere Konten bestätigen per UAC.
+* **Mehrere Windows-Konten:** Jedes Konto richtet einen eigenen Hello-Schlüssel
+  ein; Konten ohne Schlüssel bestätigen per UAC. Der Schlüssel selbst verlässt
+  das TPM des Rechners nicht, auf dem er entstanden ist.
 * **Notfall:** Sollte etwas die Verbindung blockieren, entfernt
   `briqwall-service reset` (als Administrator) sofort alle Filter.
 

@@ -69,6 +69,7 @@ function sampleApps(): AppInfo[] {
       blocked_count: 4,
       last_blocked: t() - 180,
       last_remote: "185.199.108.153:443 (HTTPS)",
+      last_host: "update.quicknotes-app.example",
     }),
     app({
       name: "curl",
@@ -82,6 +83,7 @@ function sampleApps(): AppInfo[] {
       blocked_count: 2,
       last_blocked: t() - 360,
       last_remote: "104.20.23.154:443 (HTTPS)",
+      last_host: "api.example.com",
       origins: [
         {
           pid: 6604,
@@ -106,6 +108,7 @@ function sampleApps(): AppInfo[] {
       blocked_count: 5,
       last_blocked: t() - 40,
       last_remote: "45.133.1.20:443 (HTTPS)",
+      last_host: "cdn-77.example.net",
       origins: [
         {
           pid: 9412,
@@ -228,7 +231,7 @@ export function createMock(): Backend {
   const push = (kind: XEvent["kind"], ago = 0) => events.push({ seq: ++seq, time: t() - ago, kind });
   push({ Started: { version: "0.9.0", mode: "Balanced" } }, 600);
   push({ AutoAllowed: { key: "discord", name: "Discord", reason: { KnownPublisher: "Discord Inc." } } }, 420);
-  push({ Blocked: { key: "curl", name: "curl", remote: "104.20.23.154:443 (HTTPS)", direction: "Out", by_rule: false } }, 360);
+  push({ Blocked: { key: "curl", name: "curl", remote: "104.20.23.154:443 (HTTPS)", host: "api.example.com", direction: "Out", by_rule: false } }, 360);
   push({ NewRequest: { key: "curl", name: "curl", risk: "Medium" } }, 359);
   push({ Blocked: { key: "x", name: "Host Process for Windows Services", remote: "203.0.113.24:3389 (RDP)", direction: "In", by_rule: false } }, 240);
   push({ NewRequest: { key: "quicknotes", name: "QuickNotes", risk: "High" } }, 180);
@@ -252,7 +255,7 @@ export function createMock(): Backend {
     blocked_session: 27,
     started: t() - 600,
     revision: 1,
-    hello_enrolled: false,
+    hello_users: [],
     settings: {
       mode: "Balanced",
       previous_mode: "Balanced",
@@ -280,8 +283,8 @@ export function createMock(): Backend {
   };
 
   const apply = (req: Request) => {
-    if (typeof req === "string") {
-      status.hello_enrolled = false;
+    if ("RemoveHello" in req) {
+      status.hello_users = [];
       return;
     }
     if ("SetMode" in req) {
@@ -332,6 +335,8 @@ export function createMock(): Backend {
     service_exe_available: false,
     language: storedLang,
     system_language: navigator.language.toLowerCase().startsWith("de") ? "de" : "en",
+    user_sid: "S-1-5-21-0-0-0-1001",
+    user_name: "alex",
   };
 
   // Programs the "file dialog" returns in demo mode, one per click.
@@ -365,13 +370,13 @@ export function createMock(): Backend {
     helloSupported: async () => true,
     helloEnroll: async () => {
       await new Promise((r) => setTimeout(r, 400));
-      status.hello_enrolled = true;
+      status.hello_users = [{ sid: prefs.user_sid, name: prefs.user_name }];
       push("HelloEnrolled");
       emit();
       return { kind: "done" };
     },
     helloRemove: async () => {
-      status.hello_enrolled = false;
+      status.hello_users = [];
       emit();
       return { kind: "done" };
     },

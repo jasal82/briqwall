@@ -294,6 +294,10 @@ export const en = {
     "Instead of an administrator password (UAC), a fingerprint, face or PIN is enough. Setup asks for administrator rights once.",
   "settings.hello.unavailable":
     "Windows Hello is not set up for this account (Settings › Accounts › Sign-in options). Until then, confirmation uses UAC.",
+  "settings.hello.accounts": "Set up for",
+  "settings.hello.accounts.desc": "Each Windows account sets up its own key; other accounts confirm with UAC.",
+  "settings.hello.thisAccount": "this account",
+  "settings.hello.deviceKey": "Set up before the update",
   "settings.lan": "Allow Windows services on the home network",
   "settings.lan.desc": "File sharing, printer and device discovery, streaming. Only on trusted networks and only from the local network.",
   "settings.net.connected": "Connected · Windows: {category}",

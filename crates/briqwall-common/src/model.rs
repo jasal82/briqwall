@@ -257,6 +257,10 @@ pub struct AppInfo {
     /// first). Held in memory by the service only, never written to disk.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub origins: Vec<ProcessOrigin>,
+    /// Name the program looked up for its last blocked attempt, if the DNS
+    /// client reported one. Memory only, never written to disk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_host: Option<String>,
 }
 
 /// One process instance that triggered a blocked connection: its command line
@@ -345,9 +349,18 @@ pub struct Status {
     /// Bumped whenever the app list changes; lets the UI skip refetching.
     pub revision: u64,
     pub settings: Settings,
-    /// A Windows Hello key is registered; approvals can be signed instead of UAC.
+    /// Accounts with a registered Windows Hello key; each of them can sign
+    /// approvals instead of confirming with UAC.
     #[serde(default)]
-    pub hello_enrolled: bool,
+    pub hello_users: Vec<HelloUser>,
+}
+
+/// A Windows account that set up Windows Hello approvals. An entry without a
+/// SID comes from a version that stored a single key for the whole device.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HelloUser {
+    pub sid: String,
+    pub name: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -362,6 +375,13 @@ pub enum EventKind {
         key: String,
         name: String,
         remote: String,
+        /// Name the program looked up for this address, if one is known.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        host: Option<String>,
+        /// The bare address, kept so the service can still attach a name a
+        /// moment later (DNS events arrive with a short delay). Never sent.
+        #[serde(skip)]
+        ip: Option<std::net::IpAddr>,
         direction: Direction,
         /// true = explicit user rule; false = default policy
         by_rule: bool,
@@ -444,10 +464,13 @@ pub enum Request {
     /// Changes approved by the user with Windows Hello. `payload` is the exact
     /// JSON array of requests that was signed (see [`approval_message`]).
     Approved { nonce: String, payload: String, signature: String },
-    /// Register the public key of the user's Windows Hello credential
-    /// (hex-encoded X.509 SubjectPublicKeyInfo). Requires an elevated client.
-    EnrollHello { public_key: String },
-    RemoveHello,
+    /// Register the public key of a user's Windows Hello credential
+    /// (hex-encoded X.509 SubjectPublicKeyInfo) for the account `sid`.
+    /// Requires an elevated client.
+    EnrollHello { public_key: String, sid: String, name: String },
+    /// Remove the key of one account (and any key from before per-account
+    /// enrollment existed).
+    RemoveHello { sid: String },
 }
 
 

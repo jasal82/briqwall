@@ -4,7 +4,7 @@
   import Seg from "../lib/Seg.svelte";
   import OriginInfo from "../lib/OriginInfo.svelte";
   import { store } from "../lib/store.svelte";
-  import { accessLabel, ago, categoryLabel, dateTime, now, reasonText, riskLabel, riskTone, ruleLabel, signatureText } from "../lib/format";
+  import { accessLabel, ago, categoryLabel, dateTime, now, reasonText, riskLabel, riskTone, ruleLabel, signatureText, targetText } from "../lib/format";
   import { q, t } from "../lib/i18n/index.svelte";
   import type { AppInfo, RuleAccess } from "../lib/types";
 
@@ -82,7 +82,7 @@
               {t("drawer.noAttempts")}
             {:else}
               {t("drawer.attempts", { out: app.blocked_count, in: app.inbound_blocked_count })}{app.last_remote
-                ? ` · ${t("drawer.lastTarget", { remote: app.last_remote })}`
+                ? ` · ${t("drawer.lastTarget", { remote: targetText(app.last_remote, app.last_host) })}`
                 : ""}
             {/if}
           </dd>

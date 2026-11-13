@@ -126,6 +126,7 @@ sense.
 | **Inbox instead of pop-up floods** | Blocked, unknown apps land in a calm “Requests” list with a plain-language reason, risk level and last target. A subtle Windows notification informs without interrupting. For high-risk apps, “Block” is the highlighted option (nudging towards the safe choice). |
 | **Process origin** | WFP net events carry no process id, but the Security audit event 5157 does. For each attempt Briqwall blocked, the service reads the command line and the parent chain of exactly that process (a cache covers short-lived processes). Command lines stay in memory only and are never written to disk. |
 | **Rules up front** | Rules are not only an answer to a request: *Apps › Add program* picks any program and sets its rule before it ever connects. The same panel removes a rule again. |
+| **Names instead of addresses** | The service listens to the DNS client's ETW events and remembers which name resolved to which address. A request then says `telemetry.example.com` next to `45.133.1.20:443`. The cache lives in memory only and is never written to disk. |
 | **Temporary permissions** | “Allow for 1 hour” – then Briqwall closes the door by itself. Ideal for PowerShell sessions or installers. |
 | **Learning publishers** | Permanently allowing a signed app also allows its updates (which often land in new, versioned folders) and other apps by the same publisher. Can be turned off; the list can be reviewed at any time. |
 | **Tamper detection** | When you allow an app, Briqwall remembers its identity (publisher or SHA-256). If the file is replaced afterwards, the permission is suspended and Briqwall asks again. |
@@ -368,13 +369,12 @@ scripts/          build.ps1 / install.ps1 / uninstall.ps1
 * **svchost services** share one app ID. Distinguishing individual services
   (`FWPM_CONDITION_ALE_USER_ID` with the service SID) would be a useful
   extension.
-* **Host names** instead of IPs in the activity list (DNS client ETW events)
-  would make requests even easier to understand.
 * **Code signing:** the release pipeline signs as soon as a certificate is
   stored as a secret. Without one, SmartScreen and UAC show no verified
   publisher.
-* **Multiple Windows accounts:** the Hello key belongs to the account that set
-  it up. Other accounts confirm via UAC.
+* **Multiple Windows accounts:** every account sets up its own Hello key; an
+  account without one confirms via UAC. The key itself cannot leave the TPM of
+  the machine it was created on.
 * **Emergency:** if something blocks your connection, `briqwall-service reset`
   (as administrator) removes all filters immediately.
 

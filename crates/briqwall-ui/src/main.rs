@@ -310,6 +310,9 @@ struct UiPrefs {
     language: String,
     /// Language "system" resolves to.
     system_language: &'static str,
+    /// Windows account this UI runs as (SID identifies its Hello key).
+    user_sid: String,
+    user_name: String,
 }
 
 fn language_pref() -> String {
@@ -330,12 +333,15 @@ fn set_language(lang: String, app: AppHandle) {
 
 #[tauri::command]
 fn ui_prefs(shared: State<'_, Arc<Shared>>) -> UiPrefs {
+    let user = platform::current_user();
     UiPrefs {
         notifications: shared.notifications.load(Ordering::Relaxed),
         autostart: platform::autostart_enabled(),
         service_exe_available: service_exe().is_some(),
         language: language_pref(),
         system_language: i18n::system_language(),
+        user_sid: user.0,
+        user_name: user.1,
     }
 }
 

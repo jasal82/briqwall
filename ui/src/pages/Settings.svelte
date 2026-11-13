@@ -65,7 +65,7 @@
       <div class="grow">
         <b>{t("settings.hello")}</b>
         <span class="faint">
-          {#if s.hello_enrolled}
+          {#if store.helloEnrolled}
             {t("settings.hello.active")}
           {:else if store.helloSupported}
             {t("settings.hello.available")}
@@ -74,12 +74,29 @@
           {/if}
         </span>
       </div>
-      {#if s.hello_enrolled}
+      {#if store.helloEnrolled}
         <button class="btn ghost sm" onclick={() => store.removeHello()}>{t("common.disable")}</button>
       {:else if store.helloSupported}
         <button class="btn primary sm" onclick={() => store.enrollHello()}>{t("common.setUp")}</button>
       {/if}
     </div>
+    {#if s.hello_users.length > 0}
+      <div class="setting">
+        <div class="ic"><Icon name="users" size={18} /></div>
+        <div class="grow">
+          <b>{t("settings.hello.accounts")}</b>
+          <span class="faint">{t("settings.hello.accounts.desc")}</span>
+          <div class="chips">
+            {#each s.hello_users as u (u.sid)}
+              <span class="badge" class:ok={u.sid === store.prefs.user_sid}>
+                {u.sid === "" ? t("settings.hello.deviceKey") : u.name || u.sid}
+                {u.sid === store.prefs.user_sid ? ` · ${t("settings.hello.thisAccount")}` : ""}
+              </span>
+            {/each}
+          </div>
+        </div>
+      </div>
+    {/if}
   </div>
 
   <h2>{t("overview.network")}</h2>

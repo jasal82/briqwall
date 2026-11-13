@@ -1,7 +1,7 @@
 <script lang="ts" module>
   import type { IconName } from "./Icon.svelte";
   import type { UserRule, XEvent } from "./types";
-  import { modeLabel, reasonText, riskLabel, ruleLabel } from "./format";
+  import { modeLabel, reasonText, riskLabel, ruleLabel, targetText } from "./format";
   import { q, t } from "./i18n/index.svelte";
 
   export type Described = { icon: IconName; tone: string; title: string; sub?: string; blocked: boolean; decision: boolean };
@@ -20,10 +20,9 @@
     if (k === "HelloRemoved") return { ...base, icon: "fingerprint", tone: "accent", title: t("event.helloRemoved") };
     if ("Blocked" in k) {
       const b = k.Blocked;
+      const remote = targetText(b.remote, b.host);
       const title =
-        b.direction === "Out"
-          ? t("event.blocked.out", { name: b.name, remote: b.remote })
-          : t("event.blocked.in", { name: b.name, remote: b.remote });
+        b.direction === "Out" ? t("event.blocked.out", { name: b.name, remote }) : t("event.blocked.in", { name: b.name, remote });
       const sub = b.by_rule ? t("event.byRule") : b.direction === "Out" ? t("event.waiting") : t("event.unsolicited");
       return { icon: "block", tone: "danger", title, sub, blocked: true, decision: false };
     }

@@ -10,6 +10,7 @@
 mod compiler;
 mod cli_text;
 mod core;
+mod dns;
 mod hello;
 mod ipc_server;
 mod policy;
@@ -45,6 +46,7 @@ fn main() {
     let res = match args.get(1).map(String::as_str) {
         Some("service") => service_dispatcher::start(SERVICE_NAME, ffi_service_main).context("service dispatcher"),
         Some("console") => run_console(),
+
         Some("install") => install(),
         Some("uninstall") => uninstall(args.iter().any(|a| a == "--purge")),
         Some("reset") => reset(),
@@ -96,6 +98,10 @@ fn start(tx: Sender<Msg>, rx: Receiver<Msg>, echo: bool) -> Result<std::thread::
             match watchers::subscribe_drop_audit(tx.clone()) {
                 Ok(()) => log::info!("Audit-Ereignis 5157 abonniert (Prozess-Herkunft)"),
                 Err(err) => log::warn!("Keine Prozess-Herkunft: {err:#}"),
+            }
+            match dns::start() {
+                Ok(()) => log::info!("DNS-Client-Ereignisse abonniert (Hostnamen)"),
+                Err(err) => log::warn!("Keine Hostnamen: {err:#}"),
             }
             Ok(e)
         }

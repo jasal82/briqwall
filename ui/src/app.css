@@ -256,6 +256,7 @@ h2 { font: 600 15px var(--font-display); margin: 28px 0 10px; letter-spacing: -.
 .trow.sel { background: var(--accent-soft); }
 .appcell { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .appcell .t { min-width: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
 .name-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .tag-rule { flex: none; font-size: 11px; font-weight: 600; color: var(--accent); background: var(--accent-soft); padding: 1px 6px; border-radius: 5px; }
 .appcell b { font-weight: 600; display: block; }

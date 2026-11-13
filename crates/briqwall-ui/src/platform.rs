@@ -289,3 +289,40 @@ pub fn toast(title: &str, body: &str, action: Option<&str>) -> Result<()> {
     notifier.Show(&n).map_err(|e| anyhow!("{e}"))?;
     Ok(())
 }
+
+/// SID and display name of the account this UI runs as. The SID identifies
+/// the Windows Hello key in the service (one key per account).
+pub fn current_user() -> (String, String) {
+    use windows::Win32::Foundation::LocalFree;
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    use windows::Win32::System::WindowsProgramming::GetUserNameW;
+
+    let mut name = String::new();
+    let mut buf = [0u16; 257];
+    let mut len = buf.len() as u32;
+    if unsafe { GetUserNameW(Some(windows::core::PWSTR(buf.as_mut_ptr())), &mut len) }.is_ok() {
+        name = briqwall_common::util::from_wide(&buf);
+    }
+
+    let mut sid = String::new();
+    unsafe {
+        let mut token = HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_ok() {
+            let mut size = 0u32;
+            let _ = GetTokenInformation(token, TokenUser, None, 0, &mut size);
+            let mut data = vec![0u8; size as usize];
+            if size > 0 && GetTokenInformation(token, TokenUser, Some(data.as_mut_ptr() as *mut _), size, &mut size).is_ok() {
+                let user = &*(data.as_ptr() as *const TOKEN_USER);
+                let mut text = windows::core::PWSTR::null();
+                if ConvertSidToStringSidW(user.User.Sid, &mut text).is_ok() {
+                    sid = text.to_string().unwrap_or_default();
+                    let _ = LocalFree(Some(windows::Win32::Foundation::HLOCAL(text.0 as *mut _)));
+                }
+            }
+            let _ = CloseHandle(token);
+        }
+    }
+    (sid, name)
+}

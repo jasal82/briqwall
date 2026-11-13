@@ -16,7 +16,7 @@
 
   const chosen = $derived(store.pending.filter((a) => selected.includes(a.key)));
   const allSelected = $derived(store.pending.length > 0 && chosen.length === store.pending.length);
-  const hello = $derived(store.status?.hello_enrolled ?? false);
+  const hello = $derived(store.helloEnrolled);
 
   function toggle(key: string) {
     selected = selected.includes(key) ? selected.filter((k) => k !== key) : [...selected, key];

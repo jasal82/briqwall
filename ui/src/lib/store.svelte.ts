@@ -31,6 +31,8 @@ class Store {
     service_exe_available: false,
     language: "system",
     system_language: "en",
+    user_sid: "",
+    user_name: "",
   });
 
   page = $state<Page>("overview");
@@ -38,6 +40,12 @@ class Store {
   busy = $state(0);
   helloSupported = $state(false);
   toast = $state<{ id: number; text: string; tone: ToastTone } | null>(null);
+
+  /**
+   * Is this Windows account set up for Hello? A key without a sid predates
+   * per-account enrollment and belonged to the device as a whole.
+   */
+  helloEnrolled = $derived((this.status?.hello_users ?? []).some((u) => u.sid === "" || u.sid === this.prefs.user_sid));
 
   pending = $derived(
     this.apps

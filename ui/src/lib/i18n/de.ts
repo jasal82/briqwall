@@ -299,6 +299,10 @@ export const de: Dict = {
     "Statt Administratorkennwort (UAC) reicht Fingerabdruck, Gesicht oder PIN. Die Einrichtung fragt einmal nach Administratorrechten.",
   "settings.hello.unavailable":
     "Windows Hello ist auf diesem Konto nicht eingerichtet (Einstellungen › Konten › Anmeldeoptionen). Bis dahin wird per UAC bestätigt.",
+  "settings.hello.accounts": "Eingerichtet für",
+  "settings.hello.accounts.desc": "Jedes Windows-Konto richtet einen eigenen Schlüssel ein; andere Konten bestätigen per UAC.",
+  "settings.hello.thisAccount": "dieses Konto",
+  "settings.hello.deviceKey": "Vor dem Update eingerichtet",
   "settings.lan": "Windows-Dienste im Heimnetz erlauben",
   "settings.lan.desc": "Dateifreigabe, Drucker- und Gerätesuche, Streaming. Nur in vertrauenswürdigen Netzen und nur aus dem lokalen Netz.",
   "settings.net.connected": "Verbunden · Windows: {category}",
