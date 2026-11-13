@@ -11,6 +11,7 @@ mod compiler;
 mod cli_text;
 mod core;
 mod dns;
+mod evaluator;
 mod hello;
 mod ipc_server;
 mod policy;
@@ -114,12 +115,17 @@ fn start(tx: Sender<Msg>, rx: Receiver<Msg>, echo: bool) -> Result<std::thread::
         }
     };
 
+    // New programs: process watcher → workers that check the file → core.
+    let known = evaluator::KnownFiles::default();
+    let (path_tx, path_rx) = mpsc::channel();
+    evaluator::spawn(path_rx, tx.clone(), known.clone(), trust::windows_dir());
+
     let handle = std::thread::Builder::new().name("core".into()).spawn(move || {
-        let mut core = Core::new(dir, engine);
+        let mut core = Core::new(dir, engine, known);
         core.note_audit_enabled(audit_enabled);
         core.run(rx);
     })?;
-    watchers::spawn_process_watcher(tx.clone());
+    watchers::spawn_process_watcher(path_tx);
     ipc_server::spawn(tx);
     Ok(handle)
 }

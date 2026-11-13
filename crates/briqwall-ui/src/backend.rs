@@ -6,9 +6,9 @@ use crate::i18n::{self, t};
 use crate::platform::{self, ElevationResult};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use briqwall_common::ipc::Client;
 use briqwall_common::*;
 
@@ -52,7 +52,9 @@ pub enum AddResult {
 
 pub struct Shared {
     pub snap: Mutex<Snapshot>,
-    pub poke: AtomicBool,
+    /// Set by [`Shared::poke`]; the poller sleeps on it.
+    poked: Mutex<bool>,
+    wake: Condvar,
     pub notifications: AtomicBool,
 }
 
@@ -60,9 +62,24 @@ impl Shared {
     pub fn new(notifications: bool) -> Arc<Self> {
         Arc::new(Self {
             snap: Mutex::new(Snapshot::default()),
-            poke: AtomicBool::new(false),
+            poked: Mutex::new(false),
+            wake: Condvar::new(),
             notifications: AtomicBool::new(notifications),
         })
+    }
+
+    /// Something changed, or someone is looking: fetch from the service now
+    /// instead of at the next regular interval.
+    pub fn poke(&self) {
+        *self.poked.lock().unwrap() = true;
+        self.wake.notify_all();
+    }
+
+    /// Sleep for `d`, or until poked. Costs nothing while waiting.
+    fn wait(&self, d: Duration) {
+        let guard = self.poked.lock().unwrap();
+        let (mut poked, _) = self.wake.wait_timeout_while(guard, d, |poked| !*poked).unwrap();
+        *poked = false;
     }
 
     pub fn pending(&self) -> usize {
@@ -98,7 +115,7 @@ pub fn send_many(shared: &Shared, reqs: Vec<Request>) -> ActionResult {
         Ok(_) => ActionResult::Failed { message: i18n::unexpected_response() },
         Err(e) => ActionResult::Failed { message: format!("{e:#}") },
     };
-    shared.poke.store(true, Ordering::SeqCst);
+    shared.poke();
     r
 }
 
@@ -111,7 +128,7 @@ pub fn add_app(shared: &Shared, path: &str) -> AddResult {
         Ok(_) => AddResult::Failed { message: i18n::unexpected_response() },
         Err(e) => AddResult::Failed { message: format!("{e:#}") },
     };
-    shared.poke.store(true, Ordering::SeqCst);
+    shared.poke();
     r
 }
 
@@ -175,7 +192,7 @@ pub fn enroll_hello(shared: &Shared) -> ActionResult {
     if !matches!(r, ActionResult::Done) {
         hello::delete_key();
     }
-    shared.poke.store(true, Ordering::SeqCst);
+    shared.poke();
     r
 }
 
@@ -204,7 +221,34 @@ pub fn spawn_poller(app: AppHandle, shared: Arc<Shared>, on_status: OnStatus) {
 struct Cursor {
     started: u64,
     last_seq: u64,
+    /// Revision and activity count of the app list the frontend has.
     apps_rev: u64,
+    apps_activity: u64,
+}
+
+/// How long details nobody has to act on (counters, last targets) may lag
+/// behind while the window is open.
+const ACTIVITY_LAG: Duration = Duration::from_secs(5);
+/// Interval while the window is open / hidden in the tray. Hidden, only the
+/// tray icon and notifications depend on it.
+const POLL_VISIBLE: Duration = Duration::from_millis(1000);
+const POLL_HIDDEN: Duration = Duration::from_millis(3000);
+
+/// Fetch the app list now? It is by far the largest answer of the service
+/// (hundreds of kilobytes), and every fetch is parsed and rendered again.
+///
+/// * Nobody looking: no, except for the very first one (the frontend starts
+///   from it). What was missed is fetched when the window is shown.
+/// * Something to act on changed (apps, rules, requests): right away.
+/// * Only counters and the like: at most every [`ACTIVITY_LAG`].
+fn apps_wanted(cursor: &Cursor, status: &Status, visible: bool, have_apps: bool, since_fetch: Duration) -> bool {
+    if !have_apps {
+        return true;
+    }
+    if !visible {
+        return false;
+    }
+    status.revision != cursor.apps_rev || (status.activity != cursor.apps_activity && since_fetch >= ACTIVITY_LAG)
 }
 
 impl Cursor {
@@ -217,6 +261,7 @@ impl Cursor {
         if restarted {
             self.last_seq = 0;
             self.apps_rev = 0;
+            self.apps_activity = 0;
         }
         self.started = started;
         restarted
@@ -226,6 +271,14 @@ impl Cursor {
 fn poll_loop(app: AppHandle, shared: Arc<Shared>, on_status: OnStatus) {
     let mut cursor = Cursor::default();
     let mut first = true;
+    let mut have_apps = false;
+    let mut last_apps_fetch = Instant::now();
+    // Hidden in the tray or minimized: nobody sees the app list.
+    let window_visible = |app: &AppHandle| {
+        app.get_webview_window("main")
+            .map(|w| w.is_visible().unwrap_or(true) && !w.is_minimized().unwrap_or(false))
+            .unwrap_or(true)
+    };
     let mut last_state_json = String::new();
 
     let mut publish_state = |app: &AppHandle, st: ConnState| {
@@ -248,7 +301,7 @@ fn poll_loop(app: AppHandle, shared: Arc<Shared>, on_status: OnStatus) {
                     s.error = Some(err.clone());
                 }
                 publish_state(&app, ConnState { connected: false, error: Some(err), status: None });
-                sleep_or_poke(&shared, Duration::from_secs(2));
+                shared.wait(Duration::from_secs(2));
                 continue;
             }
         };
@@ -261,9 +314,16 @@ fn poll_loop(app: AppHandle, shared: Arc<Shared>, on_status: OnStatus) {
                     // when it sees the numbering start over.
                     shared.snap.lock().unwrap().events.clear();
                 }
-                let apps = if status.revision != cursor.apps_rev {
+                let visible = window_visible(&app);
+                let apps = if apps_wanted(&cursor, &status, visible, have_apps, last_apps_fetch.elapsed()) {
                     match client.call(&Request::Apps)? {
-                        Response::Apps(a) => Some(a),
+                        Response::Apps(a) => {
+                            cursor.apps_rev = status.revision;
+                            cursor.apps_activity = status.activity;
+                            have_apps = true;
+                            last_apps_fetch = Instant::now();
+                            Some(a)
+                        }
                         _ => None,
                     }
                 } else {
@@ -272,7 +332,6 @@ fn poll_loop(app: AppHandle, shared: Arc<Shared>, on_status: OnStatus) {
                 let Response::Events(events) = client.call(&Request::Events { after: cursor.last_seq })? else {
                     anyhow::bail!("Events")
                 };
-                cursor.apps_rev = status.revision;
 
                 if !first && shared.notifications.load(Ordering::Relaxed) {
                     notify(&events);
@@ -311,9 +370,9 @@ fn poll_loop(app: AppHandle, shared: Arc<Shared>, on_status: OnStatus) {
                 publish_state(&app, ConnState { connected: false, error: Some(err), status: None });
                 break;
             }
-            sleep_or_poke(&shared, Duration::from_millis(1000));
+            shared.wait(if window_visible(&app) { POLL_VISIBLE } else { POLL_HIDDEN });
         }
-        sleep_or_poke(&shared, Duration::from_millis(500));
+        shared.wait(Duration::from_millis(500));
     }
 }
 
@@ -346,16 +405,6 @@ fn notify(events: &[Event]) {
     }
 }
 
-fn sleep_or_poke(shared: &Shared, d: Duration) {
-    let until = Instant::now() + d;
-    while Instant::now() < until {
-        if shared.poke.swap(false, Ordering::SeqCst) {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
-
 /// Typographic quotes matching the UI language.
 fn quoted(name: &str) -> String {
     format!("{}{name}{}", t("„", "“"), t("“", "”"))
@@ -365,18 +414,88 @@ fn quoted(name: &str) -> String {
 mod tests {
     use super::*;
 
+    fn status(revision: u64, activity: u64) -> Status {
+        Status {
+            version: String::new(),
+            mode: Mode::Balanced,
+            engine_ok: true,
+            engine_error: None,
+            privileged: false,
+            networks: Vec::new(),
+            network_trusted: false,
+            apps_total: 0,
+            apps_allowed: 0,
+            apps_blocked: 0,
+            pending: 0,
+            blocked_session: 0,
+            started: 1,
+            revision,
+            activity,
+            settings: Settings::default(),
+            hello_users: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn app_list_is_fetched_only_when_someone_can_see_it() {
+        let secs = Duration::from_secs;
+        let have = Cursor { started: 1, last_seq: 0, apps_rev: 5, apps_activity: 9 };
+        // The frontend starts from one list, shown or not.
+        assert!(apps_wanted(&Cursor::default(), &status(5, 9), false, false, secs(0)));
+        // Up to date.
+        assert!(!apps_wanted(&have, &status(5, 9), true, true, secs(60)));
+        // A new request or rule: immediately.
+        assert!(apps_wanted(&have, &status(6, 9), true, true, secs(0)));
+        // Only counters moved: not on every tick …
+        assert!(!apps_wanted(&have, &status(5, 10), true, true, secs(1)));
+        // … but soon.
+        assert!(apps_wanted(&have, &status(5, 10), true, true, secs(5)));
+        // Hidden in the tray: nothing, whatever changed.
+        assert!(!apps_wanted(&have, &status(6, 10), false, true, secs(600)));
+        // Shown again: what was missed is fetched right away.
+        assert!(apps_wanted(&have, &status(6, 10), true, true, secs(0)));
+        // An older service without the activity count reports 0 forever.
+        let old = Cursor { started: 1, last_seq: 0, apps_rev: 5, apps_activity: 0 };
+        assert!(!apps_wanted(&old, &status(5, 0), true, true, secs(600)));
+        assert!(apps_wanted(&old, &status(6, 0), true, true, secs(0)));
+    }
+
+    #[test]
+    fn a_poke_ends_the_wait() {
+        let shared = Shared::new(true);
+        let t = Instant::now();
+        shared.wait(Duration::from_millis(30));
+        assert!(t.elapsed() >= Duration::from_millis(25), "sleeps when nothing happens");
+
+        let s = shared.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            s.poke();
+        });
+        let t = Instant::now();
+        shared.wait(Duration::from_secs(20));
+        assert!(t.elapsed() < Duration::from_secs(5), "woken by the poke");
+
+        // A poke that came before the wait is not lost.
+        shared.poke();
+        let t = Instant::now();
+        shared.wait(Duration::from_secs(20));
+        assert!(t.elapsed() < Duration::from_secs(5));
+    }
+
     #[test]
     fn positions_start_over_with_a_new_service_instance() {
         let mut c = Cursor::default();
         assert!(!c.observe(1000), "first contact is not a restart");
         c.last_seq = 742;
         c.apps_rev = 91;
+        c.apps_activity = 17;
         assert!(!c.observe(1000), "same instance");
-        assert_eq!((c.last_seq, c.apps_rev), (742, 91));
+        assert_eq!((c.last_seq, c.apps_rev, c.apps_activity), (742, 91, 17));
 
         // The service was restarted: it numbers its events from 1 again.
         assert!(c.observe(1300));
-        assert_eq!((c.last_seq, c.apps_rev), (0, 0), "ask for everything the new instance has");
+        assert_eq!((c.last_seq, c.apps_rev, c.apps_activity), (0, 0, 0), "ask for everything the new instance has");
         c.last_seq = 3;
         assert!(!c.observe(1300));
         assert_eq!(c.last_seq, 3);

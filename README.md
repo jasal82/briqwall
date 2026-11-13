@@ -317,7 +317,10 @@ npm --prefix ui run dev
 In a normal browser (`http://localhost:5173`) the interface runs with realistic
 **demo data** (`ui/src/lib/mock.ts`), no service needed. Inside `briqwall.exe`
 it talks to the service via Tauri commands and events. The Rust side polls the
-service once per second and only pushes *changes* to the interface. The app
+service once per second (every three seconds while the window is hidden) and
+only pushes *changes* to the interface. The app list – by far the largest
+answer – is fetched only while the window is visible: immediately when
+something to act on changed, at most every five seconds for mere counters. The app
 list is virtualized, so only visible rows are in the DOM. The design follows
 Windows 11, the font is Segoe UI Variable, and light/dark follows the system
 (switchable). The agreed mock-up lives in `design/mock.html`.
@@ -374,6 +377,7 @@ crates/
     store.rs      Persistence (atomic), protected data directory, logging
     hello.rs      Verification of Windows Hello signatures (with tests)
     procinfo.rs   Command line and parent chain of blocking-relevant processes
+    evaluator.rs  Worker threads that check newly started programs (with tests)
     cli_text.rs   CLI texts (English / German)
   briqwall-ui/       Tauri shell: commands, events, tray, toasts, Hello, elevation, i18n
     installer/    NSIS hooks (set up/remove service, migration) and branding

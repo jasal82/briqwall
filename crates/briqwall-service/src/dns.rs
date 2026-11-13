@@ -244,7 +244,29 @@ pub fn start() -> anyhow::Result<()> {
 
     // MatchAnyKeyword = all bits: an event with a keyword is dropped when the
     // mask is 0, and the DNS client tags its events with keywords.
-    let err = unsafe { EnableTraceEx2(handle, &DNS_PROVIDER, EVENT_CONTROL_CODE_ENABLE_PROVIDER.0, 5, u64::MAX, 0, 0, None) };
+    //
+    // The DNS client writes around ten events per lookup; only one kind is
+    // used here. Asking for just that one keeps the others from being
+    // delivered at all. If Windows does not take the filter, everything is
+    // delivered as before and sorted out in `on_event`.
+    let mut wanted = EVENT_FILTER_EVENT_ID { FilterIn: true.into(), Reserved: 0, Count: 1, Events: [EVENT_QUERY_COMPLETED] };
+    let mut filter = EVENT_FILTER_DESCRIPTOR {
+        Ptr: &mut wanted as *mut _ as u64,
+        Size: std::mem::size_of::<EVENT_FILTER_EVENT_ID>() as u32,
+        Type: EVENT_FILTER_TYPE_EVENT_ID,
+    };
+    let params = ENABLE_TRACE_PARAMETERS {
+        Version: ENABLE_TRACE_PARAMETERS_VERSION_2,
+        EnableFilterDesc: &mut filter,
+        FilterDescCount: 1,
+        ..Default::default()
+    };
+    let mut err =
+        unsafe { EnableTraceEx2(handle, &DNS_PROVIDER, EVENT_CONTROL_CODE_ENABLE_PROVIDER.0, 5, u64::MAX, 0, 0, Some(&params)) };
+    if err != ERROR_SUCCESS {
+        log::warn!("DNS-Namen: Ereignisfilter nicht angenommen ({err:?}), lese alle Ereignisse");
+        err = unsafe { EnableTraceEx2(handle, &DNS_PROVIDER, EVENT_CONTROL_CODE_ENABLE_PROVIDER.0, 5, u64::MAX, 0, 0, None) };
+    }
     if err != ERROR_SUCCESS {
         stop();
         anyhow::bail!("EnableTraceEx2 DNS-Client: {err:?}");

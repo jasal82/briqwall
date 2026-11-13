@@ -67,6 +67,12 @@ fn main() {
             install_service
         ])
         .on_window_event(|window, event| {
+            // Back from the taskbar: bring the app list up to date at once.
+            if let WindowEvent::Focused(true) = event {
+                if let Some(shared) = window.app_handle().try_state::<Arc<Shared>>() {
+                    shared.poke();
+                }
+            }
             // Closing only hides the window; protection and tray stay.
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
@@ -147,6 +153,10 @@ fn show_main(app: &AppHandle) {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+    }
+    // While hidden, the app list was not kept up to date. Fetch it now.
+    if let Some(shared) = app.try_state::<Arc<Shared>>() {
+        shared.poke();
     }
 }
 
@@ -389,7 +399,7 @@ async fn install_service(shared: State<'_, Arc<Shared>>) -> Result<ActionResult,
             platform::ElevationResult::Cancelled => ActionResult::Cancelled,
             platform::ElevationResult::Failed(m) => ActionResult::Failed { message: m },
         };
-        shared.poke.store(true, Ordering::SeqCst);
+        shared.poke();
         r
     })
     .await

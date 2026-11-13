@@ -23,41 +23,74 @@ use briqwall_common::{NetCategory, NetworkInfo};
 // Process watcher
 // ---------------------------------------------------------------------------
 
-/// Polls the process list and reports every newly started process with its
-/// image path. This lets Briqwall evaluate (and usually permit) an app *before*
+/// Polls the process ids and reports the image path of every newly started
+/// process. This lets Briqwall evaluate (and usually permit) an app *before*
 /// its first connection attempt.
-pub fn spawn_process_watcher(tx: Sender<Msg>) {
+///
+/// Five times a second, so it has to be cheap: only the list of ids is
+/// read. A full snapshot of all processes (names, parents, thread counts)
+/// costs over two hundred times as much and is taken only when a new
+/// process cannot be opened to ask it directly.
+pub fn spawn_process_watcher(tx: Sender<String>) {
     std::thread::Builder::new()
         .name("procwatch".into())
         .spawn(move || {
             let mut known: HashSet<u32> = HashSet::new();
+            let mut last_touch = std::time::Instant::now();
             loop {
-                let procs = list_processes();
-                let mut current = HashSet::with_capacity(known.len() + 16);
-                for (pid, ppid, exe) in &procs {
-                    current.insert(*pid);
-                    if !known.contains(pid) {
-                        // Remember command line and parent while the process
-                        // still exists (short-lived tools exit quickly).
-                        crate::procinfo::remember(*pid, *ppid, exe.clone());
-                        if let Some(path) = process_path(*pid) {
-                            if tx.send(Msg::Process { path }).is_err() {
-                                return;
-                            }
+                let pids = list_pids();
+                let mut snapshot: Option<HashMap<u32, (u32, String)>> = None;
+                for pid in &pids {
+                    if known.contains(pid) {
+                        continue;
+                    }
+                    // Remember command line and parent while the process
+                    // still exists (short-lived tools exit quickly).
+                    crate::procinfo::remember(*pid, || {
+                        snapshot
+                            .get_or_insert_with(|| list_processes().into_iter().map(|(pid, ppid, exe)| (pid, (ppid, exe))).collect())
+                            .get(pid)
+                            .cloned()
+                    });
+                    if let Some(path) = process_path(*pid) {
+                        if tx.send(path).is_err() {
+                            return;
                         }
                     }
                 }
-                let pids: Vec<u32> = procs.iter().map(|p| p.0).collect();
-                crate::procinfo::touch_running(&pids);
-                known = current;
+                // Keeps cached details of running processes alive; they
+                // expire after minutes, so once a second is plenty.
+                if last_touch.elapsed() >= Duration::from_secs(1) {
+                    crate::procinfo::touch_running(&pids);
+                    last_touch = std::time::Instant::now();
+                }
+                known.clear();
+                known.extend(&pids);
                 std::thread::sleep(Duration::from_millis(200));
             }
         })
         .expect("spawn procwatch");
 }
 
+/// Ids of all processes except Idle/System.
 pub fn list_pids() -> Vec<u32> {
-    list_processes().into_iter().map(|p| p.0).collect()
+    use windows::Win32::System::ProcessStatus::EnumProcesses;
+    let mut pids = vec![0u32; 2048];
+    loop {
+        let bytes = (pids.len() * 4) as u32;
+        let mut used = 0u32;
+        if unsafe { EnumProcesses(pids.as_mut_ptr(), bytes, &mut used) }.is_err() {
+            // Should not happen; the snapshot is the slow but sure way.
+            return list_processes().into_iter().map(|p| p.0).collect();
+        }
+        if used < bytes {
+            pids.truncate(used as usize / 4);
+            pids.retain(|pid| *pid > 4);
+            return pids;
+        }
+        // Filled to the brim: there may be more.
+        pids = vec![0u32; pids.len() * 2];
+    }
 }
 
 /// (pid, parent pid, exe file name) of all processes except Idle/System.

@@ -370,6 +370,11 @@ pub struct Status {
     pub started: u64,
     /// Bumped whenever the app list changes; lets the UI skip refetching.
     pub revision: u64,
+    /// Bumped when only details of apps changed that nobody has to act on:
+    /// counters of blocked attempts, their last target, who triggered them.
+    /// The UI may take its time fetching those.
+    #[serde(default)]
+    pub activity: u64,
     pub settings: Settings,
     /// Accounts with a registered Windows Hello key; each of them can sign
     /// approvals instead of confirming with UAC.

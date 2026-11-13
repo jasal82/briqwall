@@ -234,8 +234,11 @@ npm --prefix ui run dev
 Im normalen Browser (`http://localhost:5173`) läuft die Oberfläche mit
 realistischen **Demo-Daten** (`ui/src/lib/mock.ts`), ganz ohne Dienst. In
 `briqwall.exe` spricht sie über Tauri-Commands und -Events mit dem Dienst. Der
-Rust-Teil fragt den Dienst einmal pro Sekunde ab und schickt nur *Änderungen*
-an die Oberfläche. Die App-Liste ist virtualisiert, im DOM liegen also nur die
+Rust-Teil fragt den Dienst einmal pro Sekunde ab (bei verstecktem Fenster alle
+drei Sekunden) und schickt nur *Änderungen* an die Oberfläche. Die App-Liste –
+mit Abstand die größte Antwort – wird nur geholt, solange das Fenster sichtbar
+ist: sofort, wenn sich etwas Entscheidungsrelevantes geändert hat, bei bloßen
+Zählern höchstens alle fünf Sekunden. Die App-Liste ist virtualisiert, im DOM liegen also nur die
 sichtbaren Zeilen. Das Design orientiert sich an Windows 11, die Schrift ist
 Segoe UI Variable, und hell/dunkel folgt dem System (umschaltbar). Der
 abgestimmte Entwurf liegt in `design/mock.html`.
@@ -288,6 +291,7 @@ crates/
     store.rs      Persistenz (atomar), geschütztes Datenverzeichnis, Logging
     hello.rs      Prüfung von Windows-Hello-Signaturen (mit Tests)
     procinfo.rs   Befehlszeile und Elternkette blockierter Prozesse
+    evaluator.rs  Worker-Threads, die neu gestartete Programme prüfen (mit Tests)
   briqwall-ui/       Tauri-Hülle: Commands, Events, Tray, Toasts, Hello, Elevation
     installer/    NSIS-Hooks (Dienst einrichten/entfernen, Migration) und Branding
 ui/               Oberfläche (Svelte 5 + TypeScript + Vite)

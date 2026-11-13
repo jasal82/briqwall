@@ -3,6 +3,7 @@
 //! as a [`Msg`], so no locking is needed.
 
 use crate::compiler::{self, Compiled, DirPolicy, Purpose};
+use crate::evaluator::{self, KnownFiles};
 use crate::hello;
 use crate::policy::{self, Inputs};
 use crate::store::{self, State};
@@ -16,7 +17,9 @@ use std::time::{Duration, Instant};
 use briqwall_common::*;
 
 pub enum Msg {
-    Process { path: String },
+    /// A program started. `facts`: already gathered by a worker where the
+    /// program is new or its file changed (see [`crate::evaluator`]).
+    Process { path: String, facts: Option<trust::Facts> },
     Net(NetEvt),
     /// Process details of a blocked attempt (from Security audit event 5157).
     Origin { filter_id: u64, path: Option<String>, origin: ProcessOrigin },
@@ -44,8 +47,18 @@ pub struct Core {
     network_trusted: bool,
     devmap: DevMap,
     revision: u64,
+    /// See [`Status::activity`].
+    activity: u64,
+    /// Something changed that must not be lost: rules, settings, requests.
     dirty: bool,
+    /// Only statistics changed (counters, last seen). Written now and then.
+    stats_dirty: bool,
     last_save: Instant,
+    /// Files of known apps, for the workers that evaluate new programs.
+    known: KnownFiles,
+    /// The filters of a previous run have been removed; from then on this
+    /// process knows every Briqwall filter by id.
+    purged: bool,
     blocked_session: u64,
     coalescer: Coalescer,
     started: u64,
@@ -66,7 +79,7 @@ pub struct Core {
 }
 
 impl Core {
-    pub fn new(dir: PathBuf, engine: Result<Engine, String>) -> Self {
+    pub fn new(dir: PathBuf, engine: Result<Engine, String>, known: KnownFiles) -> Self {
         let mut state = store::load(&dir);
         let now = now_secs();
         state.apps.retain(|_, a| a.rule.is_some() || now.saturating_sub(a.last_seen) < PRUNE_AFTER_SECS);
@@ -99,8 +112,12 @@ impl Core {
             network_trusted: false,
             devmap,
             revision: 1,
+            activity: 0,
             dirty: false,
+            stats_dirty: false,
             last_save: Instant::now(),
+            known,
+            purged: false,
             blocked_session: 0,
             coalescer: Coalescer::default(),
             started: now,
@@ -117,12 +134,31 @@ impl Core {
         // Evaluate everything that is already running *before* the first rebuild,
         // so the default block never hits legitimate apps on first start.
         let t = Instant::now();
-        for pid in watchers::list_pids() {
-            if let Some(path) = watchers::process_path(pid) {
-                core.observe(&path);
-            }
+        for (key, app) in &core.state.apps {
+            core.known.set(key, app.file_stamp);
         }
-        log::info!("{} laufende Programme in {} ms bewertet", core.state.apps.len(), t.elapsed().as_millis());
+        let running: std::collections::BTreeSet<String> =
+            watchers::list_pids().into_iter().filter_map(watchers::process_path).collect();
+        let running: Vec<String> = running.into_iter().collect();
+        // What is new, or changed since the last run, is checked on several
+        // threads at once: on a first start that is every running program.
+        let wanted: Vec<bool> = running
+            .iter()
+            .map(|path| {
+                let known = core.state.apps.get(&path.to_lowercase()).map(|a| a.file_stamp);
+                trust::is_local_path(path) && evaluator::needs_facts(known, trust::file_stamp(path))
+            })
+            .collect();
+        let checked = wanted.iter().filter(|w| **w).count();
+        let facts = evaluator::gather_all(&running, &wanted, &core.win_dir);
+        for (path, facts) in running.iter().zip(facts) {
+            core.observe_inner(path, true, facts);
+        }
+        log::info!(
+            "{} laufende Programme in {} ms bewertet ({checked} neu geprüft)",
+            running.len(),
+            t.elapsed().as_millis()
+        );
         core.reevaluate_all();
         core.refresh_networks(false);
         core.rebuild();
@@ -172,8 +208,8 @@ impl Core {
 
     fn handle(&mut self, msg: Msg) {
         match msg {
-            Msg::Process { path } => {
-                self.observe(&path);
+            Msg::Process { path, facts } => {
+                self.observe_inner(&path, true, facts);
             }
             Msg::Net(evt) => self.on_net_event(evt),
             Msg::Origin { filter_id, path, origin } => self.on_origin(filter_id, path, origin),
@@ -218,13 +254,13 @@ impl Core {
             .collect();
         if !resolved.is_empty() {
             self.last_hosts.extend(resolved);
-            self.revision += 1;
+            self.activity += 1;
         }
 
         if self.last_net_check.elapsed() > Duration::from_secs(5) {
             self.refresh_networks(true);
         }
-        if self.dirty && self.last_save.elapsed() > Duration::from_secs(2) {
+        if save_due(self.dirty, self.stats_dirty, self.last_save.elapsed()) {
             self.save();
         }
     }
@@ -234,6 +270,7 @@ impl Core {
             log::error!("Speichern fehlgeschlagen: {e:#}");
         }
         self.dirty = false;
+        self.stats_dirty = false;
         self.last_save = Instant::now();
     }
 
@@ -310,31 +347,40 @@ impl Core {
 
     /// Called for every new process and every blocked connection. Returns the app key.
     fn observe(&mut self, path: &str) -> String {
-        self.observe_inner(path, true)
+        self.observe_inner(path, true, None)
     }
 
     /// `announce`: log an automatic allow as an event. Off when the user adds
     /// a program by hand – nothing happened yet that is worth reporting.
-    fn observe_inner(&mut self, path: &str, announce: bool) -> String {
+    /// `facts`: what a worker already found out about the file. Without them
+    /// the file is checked here if need be, which holds up everything else.
+    fn observe_inner(&mut self, path: &str, announce: bool, facts: Option<trust::Facts>) -> String {
         let key = path.to_lowercase();
         let now = now_secs();
         if let Some(app) = self.state.apps.get_mut(&key) {
             if now.saturating_sub(app.last_seen) > 3600 {
                 app.last_seen = now;
-                self.dirty = true;
+                self.stats_dirty = true;
             }
             // A file that is not on a local disk is only looked at once a
             // person has confirmed a permission for it (see `trust::is_local_path`).
             if trust::is_local_path(path) || policy::grants(app.rule.as_ref()) {
-                let stamp = trust::file_stamp(path);
+                let stamp = match &facts {
+                    Some(f) => f.stamp,
+                    None => trust::file_stamp(path),
+                };
                 if stamp.is_some() && stamp != app.file_stamp {
-                    self.refresh_facts(&key, path);
+                    self.refresh_facts(&key, path, facts);
                 }
             }
             return key;
         }
 
-        let f = if trust::is_local_path(path) { trust::gather(path, &self.win_dir) } else { trust::unverified(path, None) };
+        let f = match facts {
+            Some(f) => f,
+            None if trust::is_local_path(path) => trust::gather(path, &self.win_dir),
+            None => trust::unverified(path, None),
+        };
         let mut app = AppInfo {
             key: key.clone(),
             path: path.to_string(),
@@ -371,6 +417,7 @@ impl Core {
         if announce && app.category == Category::UserSpace && app.effective_out == Access::Allow {
             self.push(EventKind::AutoAllowed { key: key.clone(), name: app.name.clone(), reason: app.reason.clone() });
         }
+        self.known.set(&key, app.file_stamp);
         self.state.apps.insert(key.clone(), app);
         self.apply_app(&key);
         self.changed();
@@ -422,15 +469,16 @@ impl Core {
     }
 
     /// The file behind a known app changed (update or replacement).
-    fn refresh_facts(&mut self, key: &str, path: &str) {
+    fn refresh_facts(&mut self, key: &str, path: &str, facts: Option<trust::Facts>) {
         // Only reached for files the service may look at (see `observe_inner`).
         // Off a local disk that is the content, not signature or permissions.
-        let f = if trust::is_local_path(path) {
-            trust::gather(path, &self.win_dir)
-        } else {
-            trust::unverified(path, trust::file_stamp(path))
+        let f = match facts {
+            Some(f) => f,
+            None if trust::is_local_path(path) => trust::gather(path, &self.win_dir),
+            None => trust::unverified(path, trust::file_stamp(path)),
         };
         let Some(mut app) = self.state.apps.remove(key) else { return };
+        self.known.set(key, f.stamp);
         app.name = f.name;
         app.signature = f.signature;
         app.category = f.category;
@@ -522,17 +570,18 @@ impl Core {
                 }
             }
         }
-        self.dirty = true;
+        // Counters can wait; a new request must survive a crash.
+        self.stats_dirty = true;
         if let Some(risk) = new_request {
             self.push(EventKind::NewRequest { key: key.clone(), name: name.clone(), risk });
-            self.revision += 1;
+            self.changed();
         }
         let dkey = format!("{key}|{dir:?}|{remote}");
         if self.coalescer.should_log(&dkey, Duration::from_secs(30)) {
             let host_verified = host.as_ref().is_some_and(|h| h.verified);
             let host = host.map(|h| h.name);
             self.push(EventKind::Blocked { key, name, remote, host, host_verified, ip: evt.remote, direction: dir, by_rule });
-            self.revision += 1;
+            self.activity += 1;
         }
     }
 
@@ -575,7 +624,7 @@ impl Core {
             list.insert(0, origin);
             list.truncate(KEEP);
         }
-        self.revision += 1;
+        self.activity += 1;
     }
 
     // -----------------------------------------------------------------------
@@ -683,9 +732,20 @@ impl Core {
                 per_app.push((k, c));
             }
         }
+        // Finding Briqwall's filters means reading every filter on the
+        // system, Windows Firewall's thousands included. That is only needed
+        // once, for what an earlier run left behind. After that, every filter
+        // was added by this process and is known by its id.
+        let tracked: Option<Vec<u64>> = self.purged.then(|| self.purposes.keys().copied().collect());
         let engine = self.engine.as_ref().unwrap();
         let res = engine.transaction(|e| {
-            let purged = e.purge_filters()?;
+            let purged = match &tracked {
+                Some(ids) => {
+                    ids.iter().for_each(|id| e.delete_filter(*id));
+                    ids.len()
+                }
+                None => e.purge_filters()?,
+            };
             let mut base_ids = Vec::new();
             for (spec, p) in &base {
                 base_ids.push((e.add_filter(spec)?, p.clone()));
@@ -706,6 +766,7 @@ impl Core {
         });
         match res {
             Ok((purged, base_ids, app_ids)) => {
+                self.purged = true;
                 self.purposes.clear();
                 self.app_filter_ids.clear();
                 let mut total = base_ids.len();
@@ -791,6 +852,7 @@ impl Core {
             blocked_session: self.blocked_session,
             started: self.started,
             revision: self.revision,
+            activity: self.activity,
             settings: self.state.settings.clone(),
             hello_users: self
                 .state
@@ -889,6 +951,7 @@ impl Core {
                     return Response::Error(ErrorCode::SystemEntry);
                 }
                 self.state.apps.remove(&key);
+                self.known.remove(&key);
                 self.app_id_cache.remove(&key);
                 self.origins.remove(&key);
                 self.last_hosts.remove(&key);
@@ -1031,7 +1094,7 @@ impl Core {
     fn add_app(&mut self, path: &str) -> Response {
         let Some(full) = full_path(path) else { return Response::Error(ErrorCode::NoSuchFile) };
         let existed = self.state.apps.contains_key(&full.to_lowercase());
-        let key = self.observe_inner(&full, false);
+        let key = self.observe_inner(&full, false, None);
         if !existed {
             log::info!("Programm manuell aufgenommen: {full}");
         }
@@ -1097,6 +1160,14 @@ impl Core {
         }
         Response::Ok
     }
+}
+
+/// Is it time to write the state file? What must not be lost goes out
+/// within seconds. Statistics alone are not worth a rewrite of the whole
+/// file every other second while something is being blocked – they wait
+/// for the next real change, or a few minutes.
+fn save_due(dirty: bool, stats_dirty: bool, since_last_save: Duration) -> bool {
+    (dirty && since_last_save > Duration::from_secs(2)) || (stats_dirty && since_last_save > Duration::from_secs(300))
 }
 
 /// May this client see the command line of that blocked process?
@@ -1210,6 +1281,18 @@ mod tests {
             // No name lookup, no connection attempt.
             assert!(t.elapsed() < Duration::from_millis(500), "{p} took {:?}", t.elapsed());
         }
+    }
+
+    #[test]
+    fn statistics_alone_do_not_rewrite_the_state_file() {
+        let secs = Duration::from_secs;
+        assert!(!save_due(false, false, secs(3600)));
+        assert!(!save_due(true, false, secs(1)));
+        assert!(save_due(true, false, secs(3)), "rules and requests within seconds");
+        assert!(!save_due(false, true, secs(3)), "counters wait");
+        assert!(!save_due(false, true, secs(299)));
+        assert!(save_due(false, true, secs(301)), "but not forever");
+        assert!(save_due(true, true, secs(3)), "and go along with the next real change");
     }
 
     #[test]

@@ -43,13 +43,17 @@ fn cache() -> &'static Mutex<HashMap<u32, Entry>> {
     C.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Called by the process watcher for every process it sees for the first time.
-pub fn remember(pid: u32, ppid: u32, exe: String) {
-    let info = inspect(pid).map(|mut i| {
-        i.exe = exe.clone();
-        i
-    });
-    let info = info.unwrap_or(ProcInfo { pid, ppid, exe, path: None, cmdline: None, created: 0, user_sid: None });
+/// Called by the process watcher for every process it sees for the first
+/// time. `listed`: parent id and file name from the process list, asked for
+/// only if the process itself cannot be opened.
+pub fn remember(pid: u32, listed: impl FnOnce() -> Option<(u32, String)>) {
+    let info = match inspect(pid) {
+        Some(info) => info,
+        None => {
+            let (ppid, exe) = listed().unwrap_or_default();
+            ProcInfo { pid, ppid, exe, path: None, cmdline: None, created: 0, user_sid: None }
+        }
+    };
     let mut c = cache().lock().unwrap();
     c.insert(pid, Entry { info, seen: Instant::now() });
 }
