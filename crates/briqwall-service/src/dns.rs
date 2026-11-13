@@ -27,6 +27,20 @@ const TTL_SECS: u64 = 3 * 3600;
 struct Entry {
     host: String,
     seen: u64,
+    verified: bool,
+}
+
+/// A name for an address, and whether it can be relied on.
+///
+/// Anyone can write events in the DNS client's name, so a program can claim
+/// to have looked up "update.microsoft.com" for the address of its own
+/// server. Windows stamps every event with the process that wrote it, and
+/// that cannot be faked: a name counts as verified if it was reported by a
+/// program only administrators can modify (and that is no scripting tool).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Host {
+    pub name: String,
+    pub verified: bool,
 }
 
 fn cache() -> &'static RwLock<HashMap<IpAddr, Entry>> {
@@ -42,22 +56,64 @@ fn now_secs() -> u64 {
 }
 
 /// The name that was looked up for this address, if it is still known.
-pub fn lookup(ip: IpAddr) -> Option<String> {
+pub fn lookup(ip: IpAddr) -> Option<Host> {
     let c = cache().read().ok()?;
     let e = c.get(&ip)?;
-    (now_secs().saturating_sub(e.seen) <= TTL_SECS).then(|| e.host.clone())
+    (now_secs().saturating_sub(e.seen) <= TTL_SECS).then(|| Host { name: e.host.clone(), verified: e.verified })
 }
 
-fn remember(ip: IpAddr, host: &str) {
+fn remember(ip: IpAddr, host: &str, verified: bool) {
     let now = now_secs();
     let Ok(mut c) = cache().write() else { return };
+    // A claim does not replace what a trustworthy source reported.
+    if !verified && c.get(&ip).is_some_and(|e| e.verified && now.saturating_sub(e.seen) <= TTL_SECS) {
+        return;
+    }
     if c.len() >= MAX_ENTRIES {
         c.retain(|_, e| now.saturating_sub(e.seen) <= TTL_SECS);
         if c.len() >= MAX_ENTRIES {
             c.clear(); // pathological case: start over rather than grow
         }
     }
-    c.insert(ip, Entry { host: host.to_string(), seen: now });
+    c.insert(ip, Entry { host: host.to_string(), seen: now, verified });
+}
+
+/// A DNS name as it may be shown: letters, digits, dots, hyphens and
+/// underscores (international names arrive in their ASCII form). Anything
+/// else (spaces, look-alike characters) is not a name a lookup produces.
+fn valid_hostname(name: &str) -> Option<&str> {
+    let name = name.trim_end_matches('.');
+    let ok = !name.is_empty()
+        && name.len() <= 253
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'));
+    ok.then_some(name)
+}
+
+/// Did a program write this event that only administrators can modify?
+/// Remembered per process for a while, lookups come in bursts.
+fn emitter_trusted(pid: u32) -> bool {
+    const KEEP_SECS: u64 = 60;
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<HashMap<u32, (bool, u64)>>> = std::sync::OnceLock::new();
+    let seen = SEEN.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    let now = now_secs();
+    if let Ok(map) = seen.lock() {
+        if let Some((trusted, at)) = map.get(&pid) {
+            if now.saturating_sub(*at) <= KEEP_SECS {
+                return *trusted;
+            }
+        }
+    }
+    let trusted = crate::procinfo::lookup(pid, None).and_then(|i| i.path).is_some_and(|path| {
+        let file = path.rsplit('\\').next().unwrap_or_default().to_lowercase();
+        !crate::policy::is_lolbin(&file) && crate::trust::is_protected(&path)
+    });
+    if let Ok(mut map) = seen.lock() {
+        if map.len() >= 2048 {
+            map.retain(|_, (_, at)| now.saturating_sub(*at) <= KEEP_SECS);
+        }
+        map.insert(pid, (trusted, now));
+    }
+    trusted
 }
 
 // ---------------------------------------------------------------- parsing
@@ -130,8 +186,10 @@ unsafe extern "system" fn on_event(record: *mut EVENT_RECORD) {
     }
     let data = std::slice::from_raw_parts(rec.UserData as *const u8, rec.UserDataLength as usize);
     if let Some((name, addrs)) = parse_query_completed(data) {
+        let Some(name) = valid_hostname(&name) else { return };
+        let verified = emitter_trusted(rec.EventHeader.ProcessId);
         for ip in addrs {
-            remember(ip, &name);
+            remember(ip, name, verified);
         }
     }
 }
@@ -288,8 +346,40 @@ mod tests {
     #[test]
     fn cache_returns_what_was_stored() {
         let ip: IpAddr = "203.0.113.7".parse().unwrap();
-        remember(ip, "host.example.com");
-        assert_eq!(lookup(ip).as_deref(), Some("host.example.com"));
+        remember(ip, "host.example.com", false);
+        assert_eq!(lookup(ip), Some(Host { name: "host.example.com".into(), verified: false }));
         assert_eq!(lookup("203.0.113.8".parse().unwrap()), None);
+    }
+
+    /// What a program claims never replaces what a trustworthy source said.
+    #[test]
+    fn a_claim_does_not_replace_a_verified_name() {
+        let ip: IpAddr = "203.0.113.20".parse().unwrap();
+        remember(ip, "cdn.example.net", true);
+        remember(ip, "update.microsoft.com", false);
+        assert_eq!(lookup(ip), Some(Host { name: "cdn.example.net".into(), verified: true }));
+        // The other way round the better source wins.
+        let ip: IpAddr = "203.0.113.21".parse().unwrap();
+        remember(ip, "update.microsoft.com", false);
+        remember(ip, "c2.example.org", true);
+        assert_eq!(lookup(ip), Some(Host { name: "c2.example.org".into(), verified: true }));
+    }
+
+    #[test]
+    fn only_real_dns_names_are_shown() {
+        assert_eq!(valid_hostname("example.com."), Some("example.com"));
+        assert_eq!(valid_hostname("xn--mnchen-3ya.de"), Some("xn--mnchen-3ya.de"));
+        assert_eq!(valid_hostname("_sip._tcp.example.com"), Some("_sip._tcp.example.com"));
+        assert_eq!(valid_hostname("update.microsoft.com (verified)"), None);
+        assert_eq!(valid_hostname("micr\u{43e}soft.com"), None); // Cyrillic o
+        assert_eq!(valid_hostname(""), None);
+        assert_eq!(valid_hostname(&"a".repeat(300)), None);
+    }
+
+    /// The test binary lies in a build folder anyone can write to.
+    #[test]
+    fn events_from_user_writable_programs_are_claims() {
+        assert!(!emitter_trusted(std::process::id()));
+        assert!(!emitter_trusted(0));
     }
 }

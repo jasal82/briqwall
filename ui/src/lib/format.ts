@@ -94,7 +94,12 @@ export function isUserFacing(a: AppInfo): boolean {
   return !(a.category === "System" || a.category === "Pseudo") || a.rule !== null || a.pending;
 }
 
-/** "example.com · 93.184.216.34:443 (HTTPS)" – the name first, it says more. */
-export function targetText(remote: string, host?: string | null): string {
-  return host ? `${host} · ${remote}` : remote;
+/**
+ * "example.com · 93.184.216.34:443 (HTTPS)" – the name first, it says more.
+ * A name that only the program itself (or another program of the user)
+ * reported is marked: it can claim to have looked up anything.
+ */
+export function targetText(remote: string, host?: string | null, verified?: boolean): string {
+  if (!host) return remote;
+  return `${verified ? host : t("host.claimed", { host })} · ${remote}`;
 }

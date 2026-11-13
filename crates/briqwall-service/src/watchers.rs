@@ -124,6 +124,11 @@ impl DevMap {
     /// `\device\harddiskvolume3\windows\x.exe` -> `c:\windows\x.exe` (lower-case).
     pub fn to_dos(&mut self, dev_path: &str) -> Option<String> {
         let lower = dev_path.to_lowercase();
+        // A program on a network share: the redirector device, then server
+        // and share. Its Win32 name is the UNC path.
+        if let Some(rest) = lower.strip_prefix(r"\device\mup\") {
+            return (!rest.is_empty()).then(|| format!(r"\\{rest}"));
+        }
         for attempt in 0..2 {
             for (dev, letter) in &self.map {
                 if let Some(rest) = lower.strip_prefix(dev.as_str()) {

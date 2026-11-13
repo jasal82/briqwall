@@ -159,6 +159,9 @@ pub enum Reason {
     /// Well-known publisher, but the file sits in a classic drop zone
     /// (Downloads, Temp, Desktop, …) where anyone can put a DLL next to it.
     RiskyLocation(String),
+    /// On a network share: the service does not open files there (it would
+    /// log on to that server as this computer), so nothing is known about it.
+    Unverified,
 }
 
 /// Notable location of an executable. Aliases keep state files of older
@@ -178,6 +181,9 @@ pub enum Location {
     UserProfile,
     #[serde(alias = "Wechseldatenträger")]
     Removable,
+    /// A network share, or a drive the service cannot see. Briqwall does not
+    /// read files there, so nothing about them is verified.
+    Network,
 }
 
 impl Location {
@@ -267,6 +273,11 @@ pub struct AppInfo {
     /// client reported one. Memory only, never written to disk.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_host: Option<String>,
+    /// The name was reported by a program only administrators can modify
+    /// (usually Windows' own DNS client). Otherwise it is what the program
+    /// itself, or another program of the user, claims to have looked up.
+    #[serde(default)]
+    pub last_host_verified: bool,
 }
 
 /// One process instance that triggered a blocked connection: its command line
@@ -281,6 +292,11 @@ pub struct ProcessOrigin {
     pub last_seen: u64,
     /// Blocked attempts from this origin (same command line and parents).
     pub count: u32,
+    /// Account the process ran as. Command lines can hold secrets, so the
+    /// service hands an origin only to that account (and to administrators).
+    /// Never sent.
+    #[serde(skip)]
+    pub owner_sid: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -384,6 +400,9 @@ pub enum EventKind {
         /// Name the program looked up for this address, if one is known.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         host: Option<String>,
+        /// See [`AppInfo::last_host_verified`].
+        #[serde(default)]
+        host_verified: bool,
         /// The bare address, kept so the service can still attach a name a
         /// moment later (DNS events arrive with a short delay). Never sent.
         #[serde(skip)]

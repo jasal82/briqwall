@@ -131,6 +131,26 @@ sie zurückgesetzt.
 * Der erhöhte Helfer (`briqwall.exe --apply`) zeigt die Änderung im Klartext
   und fragt nach, bevor er sie an den Dienst schickt. Die UAC-Abfrage nennt nur
   „Briqwall“, nicht die Änderung – und jedes Programm kann den Helfer starten.
+* Dateirechte zählen nur auf Datenträgern, die die Administratoren dieses PCs
+  kontrollieren: dem Windows-Laufwerk und internen Festplatten. Eine
+  USB-Platte, Speicherkarte oder ein Datenträgerabbild bringt eigene Besitzer
+  und Rechte mit. Dateien auf Netzwerkfreigaben öffnet der Dienst gar nicht
+  (als SYSTEM würde er diesen PC an jenem Server anmelden); Programme dort
+  fragen immer nach und werden erst gelesen, wenn Sie sie erlaubt haben.
+* Ein Programm erscheint nur dann unter der Beschreibung aus seiner Datei, wenn
+  jemand dafür einsteht – eine gültige Signatur oder ein Administrator, der es
+  installiert hat. Alles andere heißt wie seine Datei; ein unsignierter
+  Download kann sich so nicht „Windows Update“ nennen.
+* Hostnamen sind als *unbestätigt* gekennzeichnet, solange sie nicht von einem
+  Programm gemeldet wurden, das nur Administratoren ändern können (in der Regel
+  der DNS-Client von Windows): Jedes Programm kann DNS-Ereignisse schreiben und
+  behaupten, einen harmlosen Namen nachgeschlagen zu haben.
+* Kommandozeilen blockierter Prozesse bekommt nur das Konto zu sehen, unter dem
+  der Prozess lief, sowie Administratoren.
+* `briqwall-service install` richtet den Dienst nicht aus einem Ordner ein, in
+  den Nicht-Administratoren schreiben dürfen.
+* Bekannte Herausgeber werden am ganzen Zertifikatsnamen erkannt (plus
+  Rechtsform wie „Inc.“), nicht am Namensanfang.
 * Das `briqwall:`-Protokoll (Klick auf eine Benachrichtigung) kann nur das Fenster
   öffnen, nie Aktionen auslösen – jede Webseite könnte es aufrufen.
 

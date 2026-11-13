@@ -25,6 +25,7 @@ export type Reason =
   | "InvalidSignature"
   | "Unsigned"
   | "MisplacedSystemFile"
+  | "Unverified"
   | { RiskyLocation: string }
   | { InstalledSigned: string }
   | { LearnedPublisher: string }
@@ -32,7 +33,7 @@ export type Reason =
   | { SignedRelaxed: string }
   | { UnknownPublisher: string };
 
-export type Location = "Downloads" | "Temp" | "Desktop" | "Public" | "AppData" | "ProgramFiles" | "UserProfile" | "Removable";
+export type Location = "Downloads" | "Temp" | "Desktop" | "Public" | "AppData" | "ProgramFiles" | "UserProfile" | "Removable" | "Network";
 export type NetCategory = "Public" | "Private" | "Domain";
 
 export interface UserRule {
@@ -58,6 +59,8 @@ export interface AppInfo {
   last_remote: string | null;
   /** Name looked up for the last blocked attempt (service keeps it in memory only). */
   last_host?: string | null;
+  /** Reported by a program only administrators can modify; otherwise it is a claim. */
+  last_host_verified?: boolean;
   rule: UserRule | null;
   auto_out: Access;
   auto_in: Access;
@@ -125,7 +128,7 @@ export interface Status {
 }
 
 export type EventKind =
-  | { Blocked: { key: string; name: string; remote: string; host?: string | null; direction: Direction; by_rule: boolean } }
+  | { Blocked: { key: string; name: string; remote: string; host?: string | null; host_verified?: boolean; direction: Direction; by_rule: boolean } }
   | { NewRequest: { key: string; name: string; risk: Risk } }
   | { AutoAllowed: { key: string; name: string; reason: Reason } }
   | { RuleChanged: { key: string; name: string; rule: UserRule | null } }

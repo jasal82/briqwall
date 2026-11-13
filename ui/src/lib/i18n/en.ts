@@ -66,6 +66,7 @@ export const en = {
   "location.ProgramFiles": "Program Files",
   "location.UserProfile": "User profile",
   "location.Removable": "Removable drive",
+  "location.Network": "Network share",
   "netcat.Public": "Public",
   "netcat.Private": "Private",
   "netcat.Domain": "Domain",
@@ -96,6 +97,8 @@ export const en = {
   "reason.Unsigned": "Not signed and located in a folder any program can write to – a typical way for malware to spread.",
   "reason.MisplacedSystemFile":
     "A Windows system file outside the Windows folder, in a place any program can write to. Copied and renamed system tools are a common disguise.",
+  "reason.Unverified":
+    "Runs from a network share. Briqwall does not open files there, so it knows neither who made this program nor whether it was changed.",
   "reason.RiskyLocation":
     "Signed by the well-known publisher “{publisher}”, but started from a folder for downloads or temporary files, where any program can put files next to it.",
 
@@ -152,6 +155,8 @@ export const en = {
   "req.signedBy": "Signed · {publisher}",
   "req.invalidSig": "Invalid signature",
   "req.unsigned": "Not signed",
+  "req.unverified": "Not verified",
+  "host.claimed": "{host} (unconfirmed)",
   "req.tampered": "File modified",
   "req.wanted": "Tried to reach {remote}",
   "req.localNet": "local network",

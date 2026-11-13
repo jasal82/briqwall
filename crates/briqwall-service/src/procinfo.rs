@@ -29,6 +29,8 @@ pub struct ProcInfo {
     pub cmdline: Option<String>,
     /// Creation time (FILETIME as u64) – guards against pid reuse.
     pub created: u64,
+    /// Account the process runs as.
+    pub user_sid: Option<String>,
 }
 
 struct Entry {
@@ -47,7 +49,7 @@ pub fn remember(pid: u32, ppid: u32, exe: String) {
         i.exe = exe.clone();
         i
     });
-    let info = info.unwrap_or(ProcInfo { pid, ppid, exe, path: None, cmdline: None, created: 0 });
+    let info = info.unwrap_or(ProcInfo { pid, ppid, exe, path: None, cmdline: None, created: 0, user_sid: None });
     let mut c = cache().lock().unwrap();
     c.insert(pid, Entry { info, seen: Instant::now() });
 }
@@ -79,6 +81,7 @@ pub fn inspect(pid: u32) -> Option<ProcInfo> {
             path: crate::watchers::process_path(pid),
             cmdline: command_line(h),
             created: creation_time(h).unwrap_or(0),
+            user_sid: owner_sid(h),
         };
         let _ = CloseHandle(h);
         let mut info = info;
@@ -133,6 +136,16 @@ unsafe fn command_line(h: HANDLE) -> Option<String> {
     None
 }
 
+unsafe fn owner_sid(h: HANDLE) -> Option<String> {
+    use windows::Win32::Security::TOKEN_QUERY;
+    use windows::Win32::System::Threading::OpenProcessToken;
+    let mut token = HANDLE::default();
+    OpenProcessToken(h, TOKEN_QUERY, &mut token).ok()?;
+    let sid = crate::trust::token_user_sid(token);
+    let _ = CloseHandle(token);
+    sid
+}
+
 unsafe fn creation_time(h: HANDLE) -> Option<u64> {
     let (mut c, mut e, mut k, mut u) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
     GetProcessTimes(h, &mut c, &mut e, &mut k, &mut u).ok()?;
@@ -175,7 +188,7 @@ pub fn origin(pid: u32, expected_path: Option<&str>) -> Option<ProcessOrigin> {
         parents.push(ParentProcess { pid: p.pid, name, path: p.path.clone() });
         child = p;
     }
-    Some(ProcessOrigin { pid, command_line: me.cmdline, parents, last_seen: now_secs(), count: 1 })
+    Some(ProcessOrigin { pid, command_line: me.cmdline, parents, last_seen: now_secs(), count: 1, owner_sid: me.user_sid })
 }
 
 #[cfg(test)]
@@ -190,6 +203,8 @@ mod tests {
         assert!(info.cmdline.is_some(), "command line of own process");
         assert!(info.ppid > 0);
         assert!(info.created > 0);
+        assert!(info.user_sid.as_deref().is_some_and(|s| s.starts_with("S-1-")), "{:?}", info.user_sid);
+        assert_eq!(origin(me, None).expect("origin").owner_sid, info.user_sid);
     }
 
     #[test]

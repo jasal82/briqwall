@@ -46,7 +46,9 @@ pub const LOLBINS: &[&str] = &[
 ];
 
 /// Publishers whose signed apps are commonly installed per-user (in AppData) and
-/// are trusted automatically in balanced mode. Matched case-insensitively as prefix.
+/// are trusted automatically in balanced mode. An entry matches the whole
+/// name on the certificate, optionally followed by a legal form ("Valve" also
+/// covers "Valve Corp."), see [`is_known_publisher`].
 pub const KNOWN_PUBLISHERS: &[&str] = &[
     "Microsoft Corporation",
     "Microsoft Windows",
@@ -64,7 +66,7 @@ pub const KNOWN_PUBLISHERS: &[&str] = &[
     "Opera Norway",
     "Dropbox, Inc",
     "JetBrains s.r.o.",
-    "GitHub, Inc.",
+    "GitHub",
     "Docker Inc",
     "Python Software Foundation",
     "Signal Messenger",
@@ -92,27 +94,51 @@ pub const KNOWN_PUBLISHERS: &[&str] = &[
     "Node.js Foundation",
     "OpenJS Foundation",
     "Anthropic",
-    "OpenAI",
+    "OpenAI OpCo",
     "Obsidian",
     "Element",
     "1Password",
     "Bitwarden",
     "AgileBits",
-    "TeamViewer",
+    "TeamViewer Germany",
     "Rustlang",
 ];
+
+/// Legal forms that may follow a publisher name (dots and commas removed).
+const LEGAL_FORMS: &[&str] = &[
+    "inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation", "co", "co ltd", "gmbh", "ag", "ab", "as", "sa",
+    "bv", "nv", "oy", "sro", "srl", "sas", "se", "aps", "kg", "plc", "pbc", "lp", "llp", "pty ltd", "kk",
+];
+
+/// Lower case, without dots and commas, single spaces.
+fn normalize_publisher(p: &str) -> String {
+    let lower = p.to_lowercase().replace(['.', ','], "");
+    lower.split_whitespace().collect::<Vec<_>>().join(" ")
+}
 
 pub fn is_lolbin(file_name_lower: &str) -> bool {
     LOLBINS.contains(&file_name_lower)
 }
 
+/// Is this certificate name on the built-in list? The name must be the entry
+/// itself, give or take a legal form. A mere common beginning does not count:
+/// "Valve" must not vouch for "Valve Industries Ltd" or "Valvexyz".
 pub fn is_known_publisher(p: &str) -> bool {
-    let p = p.to_lowercase();
-    KNOWN_PUBLISHERS.iter().any(|k| p.starts_with(&k.to_lowercase()))
+    let p = normalize_publisher(p);
+    if p.is_empty() {
+        return false;
+    }
+    KNOWN_PUBLISHERS.iter().any(|k| match p.strip_prefix(&normalize_publisher(k)) {
+        Some("") => true,
+        Some(rest) => rest.strip_prefix(' ').is_some_and(|form| LEGAL_FORMS.contains(&form)),
+        None => false,
+    })
 }
 
+/// A valid signature whose certificate carries no name identifies nobody; an
+/// empty entry must never match (or be learned).
 pub fn is_learned_publisher(p: &str, learned: &[String]) -> bool {
-    learned.iter().any(|l| l.eq_ignore_ascii_case(p))
+    !p.trim().is_empty() && learned.iter().any(|l| l.eq_ignore_ascii_case(p))
 }
 
 
@@ -169,6 +195,8 @@ pub fn auto_verdict(i: &Inputs) -> Verdict {
                 (Access::Ask, Reason::RiskyLocation(publisher.clone()))
             }
             Signature::Valid { publisher, .. } => (Access::Ask, Reason::UnknownPublisher(publisher.clone())),
+            // Not opened at all (network share): "unsigned" would be a guess.
+            _ if i.location == Some(Location::Network) => (Access::Ask, Reason::Unverified),
             Signature::Unsigned | Signature::Unknown => (Access::Ask, Reason::Unsigned),
         },
     };
@@ -207,6 +235,11 @@ pub fn risk(app: &AppInfo, learned: &[String]) -> Risk {
             }
         }
     }
+}
+
+/// Does the rule give the app access in either direction?
+pub fn grants(rule: Option<&UserRule>) -> bool {
+    rule.is_some_and(|r| grant_rank(r.outbound) > 0 || grant_rank(r.inbound) > 0)
 }
 
 /// How much an explicit rule grants on its own (ignoring the automatic verdict).
@@ -323,6 +356,7 @@ mod tests {
             raw_app_id: None,
             origins: Vec::new(),
             last_host: None,
+            last_host_verified: false,
         };
         (a.effective_out, a.effective_in) = effective(&a);
         a
@@ -335,6 +369,66 @@ mod tests {
         let current = app(Category::UserSpace, Signature::Unsigned, auto_out, from);
         let cand = app(Category::UserSpace, Signature::Unsigned, auto_out, to);
         loosens(&current, &cand)
+    }
+
+    #[test]
+    fn publishers_match_by_whole_name_not_by_beginning() {
+        // Names as they appear on real certificates.
+        for real in [
+            "Microsoft Corporation",
+            "Google LLC",
+            "Valve",
+            "Valve Corp.",
+            "Epic Games Inc.",
+            "Anthropic, PBC",
+            "OpenAI OpCo, LLC",
+            "TeamViewer Germany GmbH",
+            "Logitech Inc",
+            "Adobe Systems, Incorporated",
+            "Adobe Systems Incorporated",
+            "Advanced Micro Devices",
+            "GitHub",
+            "GitHub, Inc.",
+            "OpenJS Foundation",
+            "mozilla corporation",
+        ] {
+            assert!(is_known_publisher(real), "{real}");
+        }
+        // Somebody else whose name merely starts the same way.
+        for other in [
+            "Valvexyz Ltd",
+            "Valve Industries Ltd",
+            "Elemental Software Ltd",
+            "Obsidian Entertainment, Inc.",
+            "OpenAI Tools LLC",
+            "Microsoft Corporation Support Services",
+            "Microsoft Windows Publisher",
+            "Signal Messenger Tools",
+            "",
+            "Inc.",
+        ] {
+            assert!(!is_known_publisher(other), "{other}");
+        }
+    }
+
+    /// A program on a network share is never opened, so nothing about it is
+    /// known – it asks in every mode and says why.
+    #[test]
+    fn programs_on_network_shares_always_ask() {
+        for mode in [Mode::Relaxed, Mode::Balanced, Mode::Strict] {
+            let mut i = inputs(Category::UserSpace, &Signature::Unknown, mode);
+            i.location = Some(Location::Network);
+            let v = auto_verdict(&i);
+            assert_eq!((v.out, v.reason), (Access::Ask, Reason::Unverified), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn a_nameless_certificate_is_nobody() {
+        let learned = vec![String::new(), "Tiny Indie Dev".to_string()];
+        assert!(!is_learned_publisher("", &learned));
+        assert!(!is_learned_publisher("  ", &learned));
+        assert!(is_learned_publisher("tiny indie dev", &learned));
     }
 
     #[test]

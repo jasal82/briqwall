@@ -70,6 +70,7 @@ function sampleApps(): AppInfo[] {
       last_blocked: t() - 180,
       last_remote: "185.199.108.153:443 (HTTPS)",
       last_host: "update.quicknotes-app.example",
+      last_host_verified: true,
     }),
     app({
       name: "curl",
@@ -84,6 +85,7 @@ function sampleApps(): AppInfo[] {
       last_blocked: t() - 360,
       last_remote: "104.20.23.154:443 (HTTPS)",
       last_host: "api.example.com",
+      last_host_verified: true,
       origins: [
         {
           pid: 6604,
@@ -109,6 +111,7 @@ function sampleApps(): AppInfo[] {
       last_blocked: t() - 40,
       last_remote: "45.133.1.20:443 (HTTPS)",
       last_host: "cdn-77.example.net",
+      last_host_verified: true,
       origins: [
         {
           pid: 9412,
@@ -231,7 +234,7 @@ export function createMock(): Backend {
   const push = (kind: XEvent["kind"], ago = 0) => events.push({ seq: ++seq, time: t() - ago, kind });
   push({ Started: { version: "0.10.0", mode: "Balanced" } }, 600);
   push({ AutoAllowed: { key: "discord", name: "Discord", reason: { KnownPublisher: "Discord Inc." } } }, 420);
-  push({ Blocked: { key: "curl", name: "curl", remote: "104.20.23.154:443 (HTTPS)", host: "api.example.com", direction: "Out", by_rule: false } }, 360);
+  push({ Blocked: { key: "curl", name: "curl", remote: "104.20.23.154:443 (HTTPS)", host: "api.example.com", host_verified: true, direction: "Out", by_rule: false } }, 360);
   push({ NewRequest: { key: "curl", name: "curl", risk: "Medium" } }, 359);
   push({ Blocked: { key: "x", name: "Host Process for Windows Services", remote: "203.0.113.24:3389 (RDP)", direction: "In", by_rule: false } }, 240);
   push({ NewRequest: { key: "quicknotes", name: "QuickNotes", risk: "High" } }, 180);

@@ -54,12 +54,19 @@ pub fn gather(path: &str, win_dir: &str) -> Facts {
     let stamp = file_stamp(path);
     let exists = stamp.is_some();
     let version = VersionInfo::load(path);
-    let name = version.as_ref().and_then(VersionInfo::display_name).unwrap_or_else(|| {
-        path.rsplit('\\').next().unwrap_or(path).trim_end_matches(".exe").trim_end_matches(".EXE").to_string()
-    });
     let signature = if exists { verify_signature(path) } else { Signature::Unknown };
     let protected = exists && is_protected(path);
     let in_windows = lower.starts_with(&format!("{win_dir}\\"));
+    // The description inside a file is written by whoever built it: an
+    // unsigned program in a user folder can call itself "Windows Update".
+    // It is only shown where someone stands behind it – a signer, or the
+    // administrator who installed it. Everything else goes by its file name.
+    let name = (protected || signature.is_valid())
+        .then(|| version.as_ref().and_then(VersionInfo::display_name))
+        .flatten()
+        .map(|n| clean_label(&n, 80))
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| file_title(path));
 
     // The name on disk is whatever the person who put the file there chose.
     // The name the tool was built with survives a rename.
@@ -81,14 +88,142 @@ pub fn gather(path: &str, win_dir: &str) -> Facts {
     Facts { exists, name, signature, protected, category, location_hint, stamp }
 }
 
-fn is_removable(lower: &str) -> bool {
-    use windows::Win32::Storage::FileSystem::GetDriveTypeW;
-    if lower.len() < 2 || lower.as_bytes()[1] != b':' {
-        return false;
+/// File name without ".exe" – the name of a program nobody vouches for.
+pub fn file_title(path: &str) -> String {
+    let file = path.rsplit('\\').next().unwrap_or(path);
+    let title = if file.to_lowercase().ends_with(".exe") { &file[..file.len() - 4] } else { file };
+    clean_label(title, 80)
+}
+
+/// Text from a file or certificate, made safe to show: one line, no control
+/// or direction-changing characters (they can make a name read differently
+/// than it is), bounded length.
+pub fn clean_label(s: &str, max: usize) -> String {
+    let invisible = |c: char| {
+        c.is_control()
+            || ('\u{200b}'..='\u{200f}').contains(&c)
+            || ('\u{2028}'..='\u{202e}').contains(&c)
+            || ('\u{2060}'..='\u{2069}').contains(&c)
+            || c == '\u{feff}'
+    };
+    let spaced: String = s.chars().map(|c| if invisible(c) { ' ' } else { c }).collect();
+    let mut out = spaced.split_whitespace().collect::<Vec<_>>().join(" ");
+    if out.chars().count() > max {
+        out = out.chars().take(max).collect::<String>() + "…";
     }
-    let root = wide(&format!("{}\\", &lower[..2]));
-    const DRIVE_REMOVABLE: u32 = 2;
-    unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) == DRIVE_REMOVABLE }
+    out
+}
+
+const DRIVE_REMOVABLE: u32 = 2;
+const DRIVE_FIXED: u32 = 3;
+const DRIVE_CDROM: u32 = 5;
+const DRIVE_RAMDISK: u32 = 6;
+
+/// "c:\" for a path that starts with a drive letter.
+fn drive_root(path: &str) -> Option<String> {
+    let b = path.as_bytes();
+    (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\').then(|| format!("{}:\\", b[0] as char))
+}
+
+fn drive_type(root: &str) -> u32 {
+    use windows::Win32::Storage::FileSystem::GetDriveTypeW;
+    let w = wide(root);
+    unsafe { GetDriveTypeW(PCWSTR(w.as_ptr())) }
+}
+
+fn is_removable(lower: &str) -> bool {
+    drive_root(lower).is_some_and(|r| drive_type(&r) == DRIVE_REMOVABLE)
+}
+
+/// Is the file on a disk of this computer? Everything else – network shares,
+/// drives the service cannot see – is not opened by the service: reading a
+/// file on `\\server\share` as SYSTEM logs this computer on to that server,
+/// and the server is whatever the path says.
+pub fn is_local_path(path: &str) -> bool {
+    drive_root(path).is_some_and(|r| matches!(drive_type(&r), DRIVE_FIXED | DRIVE_REMOVABLE | DRIVE_CDROM | DRIVE_RAMDISK))
+}
+
+/// Facts about a file the service does not open (see [`is_local_path`]).
+pub fn unverified(path: &str, stamp: Option<(u64, u64)>) -> Facts {
+    Facts {
+        exists: stamp.is_some(),
+        name: file_title(path),
+        signature: Signature::Unknown,
+        protected: false,
+        category: Category::UserSpace,
+        location_hint: Some(Location::Network),
+        stamp,
+    }
+}
+
+/// Can the permissions on this volume be taken at face value? They say who
+/// may write *on this computer* only if its administrators control the disk.
+/// A USB disk, memory card or disk image arrives with whatever owner and
+/// permissions someone else gave it – "administrators only" included.
+fn on_trusted_volume(path: &str) -> bool {
+    let Some(root) = drive_root(path) else { return false };
+    // Windows' own volume, however it is attached (also when booted from a VHD).
+    if drive_root(&windows_dir()).is_some_and(|sys| sys.eq_ignore_ascii_case(&root)) {
+        return true;
+    }
+    drive_type(&root) == DRIVE_FIXED && bus_is_internal(&root)
+}
+
+/// How the disk behind a volume is attached. `false` if it cannot be told.
+fn bus_is_internal(root: &str) -> bool {
+    volume_bus(root).is_some_and(|(bus, removable)| {
+        // STORAGE_BUS_TYPE: 0 unknown, 4 FireWire, 7 USB, 12 SD, 13 MMC,
+        // 15 file-backed virtual disk (mounted VHD/VHDX).
+        !removable && !matches!(bus, 0 | 4 | 7 | 12 | 13 | 15)
+    })
+}
+
+/// (bus type, removable media) of the disk behind "c:\".
+fn volume_bus(root: &str) -> Option<(i32, bool)> {
+    use windows::Win32::Storage::FileSystem::FILE_SHARE_WRITE;
+    use windows::Win32::System::Ioctl::{
+        PropertyStandardQuery, StorageDeviceProperty, IOCTL_STORAGE_QUERY_PROPERTY, STORAGE_DEVICE_DESCRIPTOR,
+        STORAGE_PROPERTY_QUERY,
+    };
+    use windows::Win32::System::IO::DeviceIoControl;
+    let device = wide(&format!("\\\\.\\{}", &root[..2]));
+    unsafe {
+        // No access rights needed to ask what kind of device it is.
+        let h = CreateFileW(
+            PCWSTR(device.as_ptr()),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            None,
+        )
+        .ok()?;
+        let query = STORAGE_PROPERTY_QUERY {
+            PropertyId: StorageDeviceProperty,
+            QueryType: PropertyStandardQuery,
+            ..Default::default()
+        };
+        let mut out = [0u64; 128]; // aligned for the descriptor
+        let mut returned = 0u32;
+        let res = DeviceIoControl(
+            h,
+            IOCTL_STORAGE_QUERY_PROPERTY,
+            Some(&query as *const _ as *const _),
+            std::mem::size_of::<STORAGE_PROPERTY_QUERY>() as u32,
+            Some(out.as_mut_ptr() as *mut _),
+            std::mem::size_of_val(&out) as u32,
+            Some(&mut returned),
+            None,
+        );
+        let _ = CloseHandle(h);
+        res.ok()?;
+        if (returned as usize) < std::mem::size_of::<STORAGE_DEVICE_DESCRIPTOR>() {
+            return None;
+        }
+        let d = &*(out.as_ptr() as *const STORAGE_DEVICE_DESCRIPTOR);
+        Some((d.BusType.0, d.RemovableMedia))
+    }
 }
 
 pub fn location_hint(lower: &str) -> Option<Location> {
@@ -206,10 +341,16 @@ fn original_name(raw: &str) -> String {
 // ---------------------------------------------------------------------------
 
 pub fn verify_signature(path: &str) -> Signature {
+    // A valid signature without a name on the certificate identifies nobody.
+    // It must not count as "signed by ''" – that publisher could be learned.
+    let named = |publisher: String, catalog: bool| {
+        let publisher = clean_label(&publisher, 120);
+        if publisher.is_empty() { Signature::Unknown } else { Signature::Valid { publisher, catalog } }
+    };
     match verify_embedded(path) {
-        Ok(p) => Signature::Valid { publisher: p, catalog: false },
+        Ok(p) => named(p, false),
         Err(code) if code == TRUST_E_NOSIGNATURE => match verify_catalog(path) {
-            Some(Ok(p)) => Signature::Valid { publisher: p, catalog: true },
+            Some(Ok(p)) => named(p, true),
             Some(Err(code)) => Signature::Invalid { code },
             None => Signature::Unsigned,
         },
@@ -359,8 +500,12 @@ const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
 const INHERIT_ONLY_ACE: u8 = 0x08;
 
 /// True if no unprivileged principal can modify the file, replace it, or plant
-/// files (e.g. DLLs) next to it.
+/// files (e.g. DLLs) next to it – on a disk this computer's administrators
+/// control (see [`on_trusted_volume`]).
 pub fn is_protected(path: &str) -> bool {
+    if !on_trusted_volume(path) {
+        return false;
+    }
     let file_mask = FILE_WRITE_DATA | FILE_APPEND_DATA | DELETE | WRITE_DAC | WRITE_OWNER | GENERIC_ALL | GENERIC_WRITE;
     let dir_mask = FILE_WRITE_DATA | FILE_DELETE_CHILD | DELETE | WRITE_DAC | WRITE_OWNER | GENERIC_ALL | GENERIC_WRITE;
     let parent = match path.rfind('\\') {
@@ -373,7 +518,7 @@ pub fn is_protected(path: &str) -> bool {
         && matches!(only_trusted_can_write(&parent, dir_mask), Some(true))
 }
 
-fn sid_string(sid: PSID) -> Option<String> {
+pub(crate) fn sid_string(sid: PSID) -> Option<String> {
     unsafe {
         let mut s = PWSTR::null();
         ConvertSidToStringSidW(sid, &mut s).ok()?;
@@ -407,6 +552,21 @@ pub fn owned_by_admins(path: &str) -> bool {
         let ok = sid_string(owner).is_some_and(|s| s == "S-1-5-18" || s == "S-1-5-32-544");
         let _ = LocalFree(Some(HLOCAL(sd.0)));
         ok
+    }
+}
+
+/// SID of the account a token belongs to.
+pub(crate) fn token_user_sid(token: HANDLE) -> Option<String> {
+    use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_USER};
+    unsafe {
+        let mut size = 0u32;
+        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut size);
+        if size == 0 {
+            return None;
+        }
+        let mut data = vec![0u64; (size as usize).div_ceil(8)]; // aligned for TOKEN_USER
+        GetTokenInformation(token, TokenUser, Some(data.as_mut_ptr() as *mut _), size, &mut size).ok()?;
+        sid_string((*(data.as_ptr() as *const TOKEN_USER)).User.Sid)
     }
 }
 
@@ -470,6 +630,64 @@ mod tests {
         assert_eq!(location_hint(r"c:\users\a\appdata\local\temp\x.exe"), Some(Location::Temp));
         assert_eq!(location_hint(r"c:\users\a\appdata\local\discord\app.exe"), Some(Location::AppData));
         assert_eq!(location_hint(r"c:\program files\x\x.exe"), Some(Location::ProgramFiles));
+    }
+
+    #[test]
+    fn only_local_disks_are_opened() {
+        let win = windows_dir();
+        assert!(is_local_path(&format!(r"{win}\system32\notepad.exe")));
+        assert!(!is_local_path(r"\\server\share\tool.exe"));
+        assert!(!is_local_path(r"\\?\UNC\server\share\tool.exe"));
+        assert!(!is_local_path(r"\\.\pipe\x"));
+        assert!(!is_local_path(r"tool.exe"));
+        assert!(!is_local_path(r"c:tool.exe"));
+
+        let f = unverified(r"\\server\share\Tool.EXE", None);
+        assert_eq!((f.name.as_str(), f.protected, f.category), ("Tool", false, Category::UserSpace));
+        assert_eq!((f.signature, f.location_hint), (Signature::Unknown, Some(Location::Network)));
+        assert!(!is_protected(r"\\server\share\tool.exe"));
+    }
+
+    /// Shows how the disks of this machine are attached (`--nocapture`).
+    #[test]
+    fn system_volume_is_trusted() {
+        let win = windows_dir();
+        assert!(on_trusted_volume(&format!(r"{win}\system32\notepad.exe")));
+        for letter in 'a'..='z' {
+            let root = format!(r"{letter}:\");
+            let kind = drive_type(&root);
+            if kind > 1 {
+                println!("{root} type={kind} bus={:?} trusted={}", volume_bus(&root), on_trusted_volume(&root));
+            }
+        }
+    }
+
+    #[test]
+    fn labels_are_made_safe_to_show() {
+        assert_eq!(clean_label("  Windows\u{202e}Update\r\n ", 80), "Windows Update");
+        assert_eq!(clean_label(&"x".repeat(200), 10).chars().count(), 11);
+        assert_eq!(file_title(r"c:\users\a\downloads\Setup.EXE"), "Setup");
+        assert_eq!(file_title(r"c:\tools\noext"), "noext");
+    }
+
+    /// An unsigned program in a user folder is shown under its file name,
+    /// whatever its version resource claims to be.
+    #[test]
+    fn unsigned_program_cannot_name_itself() {
+        let win = windows_dir();
+        // curl.exe carries a description; appending a byte breaks its signature.
+        let curl = format!(r"{win}\system32\curl.exe");
+        if !std::path::Path::new(&curl).exists() {
+            return;
+        }
+        let copy = std::env::temp_dir().join("briqwall-test-renamed.exe");
+        let mut bytes = std::fs::read(&curl).unwrap();
+        bytes.push(0);
+        std::fs::write(&copy, bytes).unwrap();
+        let f = gather(copy.to_str().unwrap(), &win);
+        std::fs::remove_file(&copy).ok();
+        assert!(!f.signature.is_valid(), "{:?}", f.signature);
+        assert_eq!(f.name, "briqwall-test-renamed");
     }
 
     #[test]

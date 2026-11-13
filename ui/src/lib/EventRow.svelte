@@ -20,7 +20,7 @@
     if (k === "HelloRemoved") return { ...base, icon: "fingerprint", tone: "accent", title: t("event.helloRemoved") };
     if ("Blocked" in k) {
       const b = k.Blocked;
-      const remote = targetText(b.remote, b.host);
+      const remote = targetText(b.remote, b.host, b.host_verified);
       const title =
         b.direction === "Out" ? t("event.blocked.out", { name: b.name, remote }) : t("event.blocked.in", { name: b.name, remote });
       const sub = b.by_rule ? t("event.byRule") : b.direction === "Out" ? t("event.waiting") : t("event.unsolicited");

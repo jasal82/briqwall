@@ -18,7 +18,7 @@
   const risky = $derived(app.risk === "High" || suspicious);
   const lolbin = $derived(app.category === "Lolbin");
   const hintTone = $derived(
-    app.location_hint && ["Downloads", "Temp", "Desktop", "Public", "Removable"].includes(app.location_hint) ? "warn" : "",
+    app.location_hint && ["Downloads", "Temp", "Desktop", "Public", "Removable", "Network"].includes(app.location_hint) ? "warn" : "",
   );
 
   function isPrivate(remote: string | null): boolean {
@@ -69,6 +69,8 @@
           <span class="badge ok"><Icon name="check" size={12} />{t("req.signedBy", { publisher: pub })}</span>
         {:else if invalidSig}
           <span class="badge danger">{t("req.invalidSig")}</span>
+        {:else if app.signature === "Unknown"}
+          <span class="badge warn">{t("req.unverified")}</span>
         {:else}
           <span class="badge warn">{t("req.unsigned")}</span>
         {/if}
@@ -86,7 +88,7 @@
     <span>{reasonText(app.reason)}</span>
     {#if app.last_remote}
       <span class="faint">
-        {t("req.wanted", { remote: targetText(app.last_remote, app.last_host) })}{lanTarget ? ` (${t("req.localNet")})` : ""} · {tn("req.attempts", app.blocked_count)} · {ago(app.last_blocked)}
+        {t("req.wanted", { remote: targetText(app.last_remote, app.last_host, app.last_host_verified) })}{lanTarget ? ` (${t("req.localNet")})` : ""} · {tn("req.attempts", app.blocked_count)} · {ago(app.last_blocked)}
       </span>
     {/if}
   </div>

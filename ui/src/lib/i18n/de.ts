@@ -67,6 +67,7 @@ export const de: Dict = {
   "location.ProgramFiles": "Programme",
   "location.UserProfile": "Benutzerprofil",
   "location.Removable": "Wechseldatenträger",
+  "location.Network": "Netzwerkfreigabe",
   "netcat.Public": "Öffentlich",
   "netcat.Private": "Privat",
   "netcat.Domain": "Domäne",
@@ -99,6 +100,8 @@ export const de: Dict = {
     "Nicht signiert und in einem Ordner, in den jedes Programm schreiben kann – so verbreitet sich typischerweise Schadsoftware.",
   "reason.MisplacedSystemFile":
     "Eine Windows-Systemdatei außerhalb des Windows-Ordners, an einem Ort, an den jedes Programm schreiben kann. Kopierte und umbenannte Systemwerkzeuge sind eine verbreitete Tarnung.",
+  "reason.Unverified":
+    "Läuft von einer Netzwerkfreigabe. Briqwall öffnet dort keine Dateien und weiß deshalb weder, von wem dieses Programm stammt, noch ob es verändert wurde.",
   "reason.RiskyLocation":
     "Signiert vom bekannten Herausgeber „{publisher}“, aber aus einem Ordner für Downloads oder temporäre Dateien gestartet, in dem jedes Programm Dateien danebenlegen kann.",
 
@@ -157,6 +160,8 @@ export const de: Dict = {
   "req.signedBy": "Signiert · {publisher}",
   "req.invalidSig": "Signatur ungültig",
   "req.unsigned": "Nicht signiert",
+  "req.unverified": "Nicht geprüft",
+  "host.claimed": "{host} (unbestätigt)",
   "req.tampered": "Datei verändert",
   "req.wanted": "Wollte zu {remote}",
   "req.localNet": "lokales Netz",

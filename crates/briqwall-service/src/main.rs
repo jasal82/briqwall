@@ -185,9 +185,28 @@ fn require_admin() -> Result<()> {
     Ok(())
 }
 
+/// Exit code of `install` when the executable lies where non-administrators
+/// can replace it (the interface shows a matching message).
+const EXIT_UNPROTECTED: i32 = 5;
+
 fn install() -> Result<()> {
     require_admin()?;
     let exe = std::env::current_exe()?;
+    // The service runs as SYSTEM from exactly this file. Registered from a
+    // folder a normal user can write to, that user – or any program running
+    // as them – could swap the file and own the machine.
+    if !trust::is_protected(&exe.to_string_lossy()) {
+        eprintln!(
+            "{} {}",
+            t("Fehler:", "Error:"),
+            t(
+                "Der Dienst wird nur aus einem Ordner eingerichtet, in den ausschließlich Administratoren schreiben dürfen (z. B. C:\\Program Files\\Briqwall). Bitte den Installer oder scripts\\install.ps1 verwenden.",
+                "The service is only set up from a folder that only administrators can write to (e.g. C:\\Program Files\\Briqwall). Please use the installer or scripts\\install.ps1.",
+            )
+        );
+        eprintln!("  {}", exe.display());
+        std::process::exit(EXIT_UNPROTECTED);
+    }
     let manager =
         ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE)?;
     let info = ServiceInfo {

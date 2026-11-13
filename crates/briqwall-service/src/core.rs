@@ -20,7 +20,8 @@ pub enum Msg {
     Net(NetEvt),
     /// Process details of a blocked attempt (from Security audit event 5157).
     Origin { filter_id: u64, path: Option<String>, origin: ProcessOrigin },
-    Ipc { req: Request, privileged: bool, reply: Sender<Response> },
+    /// `caller_sid`: account of the client, if it could be determined.
+    Ipc { req: Request, privileged: bool, caller_sid: Option<String>, reply: Sender<Response> },
     Shutdown,
 }
 
@@ -60,7 +61,7 @@ pub struct Core {
     origins: HashMap<String, Vec<ProcessOrigin>>,
     /// Address and name of the last blocked attempt per app (memory only,
     /// see [`crate::dns`]).
-    last_hosts: HashMap<String, String>,
+    last_hosts: HashMap<String, crate::dns::Host>,
     last_ips: HashMap<String, std::net::IpAddr>,
 }
 
@@ -69,6 +70,13 @@ impl Core {
         let mut state = store::load(&dir);
         let now = now_secs();
         state.apps.retain(|_, a| a.rule.is_some() || now.saturating_sub(a.last_seen) < PRUNE_AFTER_SECS);
+        // Names taken from files nobody vouches for (see `trust::gather`) may
+        // still be stored from earlier versions.
+        for a in state.apps.values_mut() {
+            if a.category != Category::Pseudo && !a.protected && !a.signature.is_valid() {
+                a.name = trust::file_title(&a.path);
+            }
+        }
 
         let (engine, engine_error) = match engine {
             Ok(e) => (Some(e), None),
@@ -161,8 +169,12 @@ impl Core {
             }
             Msg::Net(evt) => self.on_net_event(evt),
             Msg::Origin { filter_id, path, origin } => self.on_origin(filter_id, path, origin),
-            Msg::Ipc { req, privileged, reply } => {
-                let resp = self.on_request(req, privileged);
+            Msg::Ipc { req, privileged, caller_sid, reply } => {
+                let resp = match req {
+                    // The one answer that depends on who is asking.
+                    Request::Apps => self.apps_for(privileged, caller_sid.as_deref()),
+                    req => self.on_request(req, privileged),
+                };
                 let _ = reply.send(resp);
             }
             Msg::Shutdown => {}
@@ -190,7 +202,7 @@ impl Core {
         }
         // DNS events arrive about a second after the block; once the name for
         // a blocked attempt is known, let the UI know there is something new.
-        let resolved: Vec<(String, String)> = self
+        let resolved: Vec<(String, crate::dns::Host)> = self
             .last_ips
             .iter()
             .filter(|(key, _)| !self.last_hosts.contains_key(*key))
@@ -303,14 +315,18 @@ impl Core {
                 app.last_seen = now;
                 self.dirty = true;
             }
-            let stamp = trust::file_stamp(path);
-            if stamp.is_some() && stamp != app.file_stamp {
-                self.refresh_facts(&key, path);
+            // A file that is not on a local disk is only looked at once a
+            // person has confirmed a permission for it (see `trust::is_local_path`).
+            if trust::is_local_path(path) || policy::grants(app.rule.as_ref()) {
+                let stamp = trust::file_stamp(path);
+                if stamp.is_some() && stamp != app.file_stamp {
+                    self.refresh_facts(&key, path);
+                }
             }
             return key;
         }
 
-        let f = trust::gather(path, &self.win_dir);
+        let f = if trust::is_local_path(path) { trust::gather(path, &self.win_dir) } else { trust::unverified(path, None) };
         let mut app = AppInfo {
             key: key.clone(),
             path: path.to_string(),
@@ -340,6 +356,7 @@ impl Core {
             raw_app_id: None,
             origins: Vec::new(),
             last_host: None,
+            last_host_verified: false,
         };
         self.evaluate(&mut app);
         log::debug!("Neue App {} → {:?} ({:?})", app.path, app.effective_out, app.reason);
@@ -387,6 +404,7 @@ impl Core {
             raw_app_id: Some(blob.to_vec()),
             origins: Vec::new(),
             last_host: None,
+            last_host_verified: false,
         };
         self.evaluate(&mut app);
         self.state.apps.insert(key.clone(), app);
@@ -397,7 +415,13 @@ impl Core {
 
     /// The file behind a known app changed (update or replacement).
     fn refresh_facts(&mut self, key: &str, path: &str) {
-        let f = trust::gather(path, &self.win_dir);
+        // Only reached for files the service may look at (see `observe_inner`).
+        // Off a local disk that is the content, not signature or permissions.
+        let f = if trust::is_local_path(path) {
+            trust::gather(path, &self.win_dir)
+        } else {
+            trust::unverified(path, trust::file_stamp(path))
+        };
         let Some(mut app) = self.state.apps.remove(key) else { return };
         app.name = f.name;
         app.signature = f.signature;
@@ -407,11 +431,7 @@ impl Core {
         app.file_stamp = f.stamp;
         self.app_id_cache.remove(key);
 
-        let grants_access = app
-            .rule
-            .as_ref()
-            .is_some_and(|r| matches!(r.outbound, RuleAccess::Allow | RuleAccess::Lan) || matches!(r.inbound, RuleAccess::Allow | RuleAccess::Lan));
-        if grants_access && !app.tampered {
+        if policy::grants(app.rule.as_ref()) && !app.tampered {
             if let Some(expected) = &app.identity {
                 let now_id = trust::identity(path, &app.signature);
                 if now_id.as_ref() != Some(expected) {
@@ -501,7 +521,9 @@ impl Core {
         }
         let dkey = format!("{key}|{dir:?}|{remote}");
         if self.coalescer.should_log(&dkey, Duration::from_secs(30)) {
-            self.push(EventKind::Blocked { key, name, remote, host, ip: evt.remote, direction: dir, by_rule });
+            let host_verified = host.as_ref().is_some_and(|h| h.verified);
+            let host = host.map(|h| h.name);
+            self.push(EventKind::Blocked { key, name, remote, host, host_verified, ip: evt.remote, direction: dir, by_rule });
             self.revision += 1;
         }
     }
@@ -531,6 +553,7 @@ impl Core {
         let list = self.origins.entry(key).or_default();
         let same = |o: &ProcessOrigin| {
             o.command_line == origin.command_line
+                && o.owner_sid == origin.owner_sid
                 && o.parents.iter().map(|p| &p.name).eq(origin.parents.iter().map(|p| &p.name))
         };
         if let Some(i) = list.iter().position(same) {
@@ -558,6 +581,12 @@ impl Core {
         }
         if let Some(id) = self.app_id_cache.get(key) {
             return Some(id.clone());
+        }
+        // Resolving the id opens the file. Off a local disk only for a
+        // permission a person confirmed – without one there is nothing to
+        // permit anyway, the app waits at the default block.
+        if !trust::is_local_path(&app.path) && !policy::grants(app.rule.as_ref()) {
+            return None;
         }
         let path = app.path.clone();
         match wfp::app_id_for_path(&path) {
@@ -764,25 +793,39 @@ impl Core {
         }
     }
 
+    /// The app list as this client may see it. Command lines of blocked
+    /// processes can hold passwords and tokens; they go to the account the
+    /// process ran as, and to administrators.
+    fn apps_for(&self, privileged: bool, caller_sid: Option<&str>) -> Response {
+        Response::Apps(
+            self.state
+                .apps
+                .values()
+                .map(|a| {
+                    let mut a = a.clone();
+                    a.origins = self
+                        .origins
+                        .get(&a.key)
+                        .map(|list| list.iter().filter(|o| may_see_origin(o, privileged, caller_sid)).cloned().collect())
+                        .unwrap_or_default();
+                    let host = self
+                        .last_hosts
+                        .get(&a.key)
+                        .cloned()
+                        .or_else(|| self.last_ips.get(&a.key).and_then(|ip| crate::dns::lookup(*ip)));
+                    a.last_host_verified = host.as_ref().is_some_and(|h| h.verified);
+                    a.last_host = host.map(|h| h.name);
+                    a
+                })
+                .collect(),
+        )
+    }
+
     fn on_request(&mut self, req: Request, privileged: bool) -> Response {
         match req {
             Request::Status => Response::Status(Box::new(self.status(privileged))),
-            Request::Apps => Response::Apps(
-                self.state
-                    .apps
-                    .values()
-                    .map(|a| {
-                        let mut a = a.clone();
-                        a.origins = self.origins.get(&a.key).cloned().unwrap_or_default();
-                        a.last_host = self
-                            .last_hosts
-                            .get(&a.key)
-                            .cloned()
-                            .or_else(|| self.last_ips.get(&a.key).and_then(|ip| crate::dns::lookup(*ip)));
-                        a
-                    })
-                    .collect(),
-            ),
+            // Inside a batch nobody reads the answer; see `handle`.
+            Request::Apps => self.apps_for(false, None),
             Request::Events { after } => {
                 // A name may only have arrived after the block was recorded.
                 let v: Vec<Event> = self
@@ -791,8 +834,11 @@ impl Core {
                     .filter(|e| e.seq > after)
                     .cloned()
                     .map(|mut e| {
-                        if let EventKind::Blocked { host: host @ None, ip: Some(ip), .. } = &mut e.kind {
-                            *host = crate::dns::lookup(*ip);
+                        if let EventKind::Blocked { host: host @ None, host_verified, ip: Some(ip), .. } = &mut e.kind {
+                            if let Some(h) = crate::dns::lookup(*ip) {
+                                *host = Some(h.name);
+                                *host_verified = h.verified;
+                            }
                         }
                         e
                     })
@@ -1003,9 +1049,7 @@ impl Core {
             return Response::Denied;
         }
 
-        let grants = cand.rule.as_ref().is_some_and(|r| {
-            matches!(r.outbound, RuleAccess::Allow | RuleAccess::Lan) || matches!(r.inbound, RuleAccess::Allow | RuleAccess::Lan)
-        });
+        let grants = policy::grants(cand.rule.as_ref());
         // Which binary the permission is for is only (re)recorded together
         // with a confirmed decision. Otherwise anyone could swap the file and
         // then "renew" the existing rule to make the new file the expected one.
@@ -1023,7 +1067,7 @@ impl Core {
             && cand.category == Category::UserSpace
             && !matches!(cand.signature, Signature::Valid { catalog: true, .. })
             && cand.rule.as_ref().is_some_and(|r| r.expires.is_none() && r.outbound == RuleAccess::Allow);
-        let publisher = cand.signature.publisher().map(str::to_string);
+        let publisher = cand.signature.publisher().map(str::to_string).filter(|p| !p.trim().is_empty());
 
         let name = cand.name.clone();
         let rule = cand.rule.clone();
@@ -1047,15 +1091,62 @@ impl Core {
     }
 }
 
-/// Full path of an existing file, resolved the way the kernel reports it for a
-/// running process (long names, no relative parts). `None` if it is no file.
+/// May this client see the command line of that blocked process?
+fn may_see_origin(o: &ProcessOrigin, privileged: bool, caller_sid: Option<&str>) -> bool {
+    privileged || (caller_sid.is_some() && o.owner_sid.as_deref() == caller_sid)
+}
+
+/// Full path of an existing file on a local disk, resolved the way the kernel
+/// reports it for a running process (long names, no relative parts). `None`
+/// if it is no file, or if the path leads off this computer.
+///
+/// Any user may send a path. The service must not open one that points to a
+/// network share – as SYSTEM it would log this computer on to a server of the
+/// sender's choosing.
 fn full_path(path: &str) -> Option<String> {
-    let p = std::path::Path::new(path);
-    if !p.is_file() {
+    let local = resolve_local(path)?;
+    if !std::fs::symlink_metadata(&local).ok()?.is_file() {
         return None;
     }
-    let full = std::fs::canonicalize(p).ok()?;
-    Some(strip_verbatim(&full.to_string_lossy()))
+    let full = strip_verbatim(&std::fs::canonicalize(&local).ok()?.to_string_lossy());
+    trust::is_local_path(&full).then_some(full)
+}
+
+/// Follow links by hand, one component at a time, so that none is followed
+/// before its target is known to be on a local disk. `None` if any step
+/// leaves the local disks (or the links do not end).
+fn resolve_local(path: &str) -> Option<PathBuf> {
+    let mut current = PathBuf::from(path);
+    for _ in 0..16 {
+        if !trust::is_local_path(&current.to_string_lossy()) {
+            return None;
+        }
+        let parts: Vec<std::path::Component> = current.components().collect();
+        let mut prefix = PathBuf::new();
+        let mut next = None;
+        for (i, part) in parts.iter().enumerate() {
+            prefix.push(part);
+            if i < 2 {
+                continue; // drive and root
+            }
+            let Ok(meta) = std::fs::symlink_metadata(&prefix) else { return None };
+            if !meta.file_type().is_symlink() {
+                continue;
+            }
+            // Read where the link points without going there.
+            let target = std::fs::read_link(&prefix).ok()?;
+            let target = if target.is_absolute() { target } else { prefix.parent()?.join(target) };
+            let mut resolved = PathBuf::from(strip_verbatim(&target.to_string_lossy()));
+            resolved.extend(&parts[i + 1..]);
+            next = Some(resolved);
+            break;
+        }
+        match next {
+            Some(n) => current = n,
+            None => return Some(current),
+        }
+    }
+    None
 }
 
 /// Remove the verbatim prefix that [`std::fs::canonicalize`] returns.
@@ -1092,5 +1183,52 @@ mod tests {
         assert_eq!(full_path(&detour.to_string_lossy()), Some(resolved));
         assert!(full_path(&dir.to_string_lossy()).is_none(), "a directory is no program");
         assert!(full_path(&format!("{}{}no-such-file.exe", dir.display(), '\\')).is_none());
+    }
+
+    /// Paths that would make the service contact another machine are turned
+    /// down by their form alone, before anything is opened.
+    #[test]
+    fn paths_off_this_computer_are_rejected_unopened() {
+        for p in [
+            r"\\198.51.100.7\share\tool.exe",
+            r"\\?\UNC\198.51.100.7\share\tool.exe",
+            r"\\.\pipe\briqwall-control",
+            r"tool.exe",
+            r"..\tool.exe",
+            "",
+        ] {
+            let t = Instant::now();
+            assert!(full_path(p).is_none(), "{p}");
+            // No name lookup, no connection attempt.
+            assert!(t.elapsed() < Duration::from_millis(500), "{p} took {:?}", t.elapsed());
+        }
+    }
+
+    #[test]
+    fn command_lines_go_to_their_own_account_only() {
+        let origin = |owner: Option<&str>| ProcessOrigin {
+            pid: 1,
+            command_line: Some("tool --password hunter2".into()),
+            parents: Vec::new(),
+            last_seen: 0,
+            count: 1,
+            owner_sid: owner.map(str::to_string),
+        };
+        let mine = origin(Some("S-1-5-21-1-1001"));
+        assert!(may_see_origin(&mine, false, Some("S-1-5-21-1-1001")));
+        assert!(!may_see_origin(&mine, false, Some("S-1-5-21-1-1002")), "another account");
+        assert!(!may_see_origin(&mine, false, None), "unidentified client");
+        assert!(may_see_origin(&mine, true, Some("S-1-5-21-1-1002")), "administrator");
+        // Owner unknown: nobody but an administrator.
+        assert!(!may_see_origin(&origin(None), false, Some("S-1-5-21-1-1001")));
+        assert!(!may_see_origin(&origin(None), false, None));
+        assert!(may_see_origin(&origin(None), true, None));
+    }
+
+    /// The owner is service-internal and must not travel over the pipe.
+    #[test]
+    fn owner_of_an_origin_is_not_serialized() {
+        let o = ProcessOrigin { pid: 1, command_line: None, parents: Vec::new(), last_seen: 0, count: 1, owner_sid: Some("S-1-5-18".into()) };
+        assert!(!serde_json::to_string(&o).unwrap().contains("S-1-5-18"));
     }
 }

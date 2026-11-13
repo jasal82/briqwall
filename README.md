@@ -212,6 +212,25 @@ uninstalling restores them.
 * The elevated helper (`briqwall.exe --apply`) spells the change out and asks
   before it sends it to the service. The UAC prompt only names “Briqwall”, not
   the change – and any program can start the helper.
+* File permissions only count on disks this computer's administrators control:
+  the Windows volume and internal fixed disks. A USB disk, memory card or disk
+  image brings its own owners and permissions. The service does not open files
+  on network shares at all (as SYSTEM it would log this computer on to that
+  server); programs there always ask, and are only read once you have allowed
+  them.
+* A program is shown under the description inside its file only if someone
+  stands behind it – a valid signature, or an administrator who installed it.
+  Everything else goes by its file name, so an unsigned download cannot call
+  itself “Windows Update”.
+* Hostnames are marked *unconfirmed* unless they were reported by a program
+  only administrators can modify (normally Windows' DNS client): any program
+  can write DNS events and claim to have looked up a harmless name.
+* Command lines of blocked processes are handed only to the account the
+  process ran as, and to administrators.
+* `briqwall-service install` refuses to register the service from a folder
+  non-administrators can write to.
+* Well-known publishers are matched by their whole certificate name (plus a
+  legal form such as “Inc.”), not by how the name begins.
 * The `briqwall:` protocol (clicking a notification) can only open the window,
   never trigger actions – any website could invoke it.
 * The service sends **codes, not sentences** (reasons, locations, errors,

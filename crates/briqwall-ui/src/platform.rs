@@ -145,6 +145,14 @@ pub fn run_elevated(file: &str, params: &str) -> ElevationResult {
             0 => ElevationResult::Applied,
             // "No" in the helper's own confirmation dialog.
             4 => ElevationResult::Cancelled,
+            // `briqwall-service install` from a folder users can write to.
+            5 => ElevationResult::Failed(
+                t(
+                    "Der Dienst lässt sich nur aus einem geschützten Ordner einrichten. Bitte Briqwall mit dem Installer installieren.",
+                    "The service can only be set up from a protected folder. Please install Briqwall with the installer.",
+                )
+                .into(),
+            ),
             3 => ElevationResult::Failed(t("Der Dienst hat die Änderung abgelehnt.", "The service rejected the change.").into()),
             _ => ElevationResult::Failed(t("Der Dienst ist nicht erreichbar.", "The service is not reachable.").into()),
         }

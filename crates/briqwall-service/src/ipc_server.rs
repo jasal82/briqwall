@@ -115,15 +115,15 @@ fn listen(tx: Sender<Msg>) -> Result<()> {
 }
 
 fn serve(h: HANDLE, tx: Sender<Msg>) {
-    let mut privileged: Option<bool> = None;
+    let mut identity: Option<(bool, Option<String>)> = None;
     loop {
         let Ok(frame) = read_frame(h) else { return };
         // Impersonation is only possible after reading from the pipe.
-        let priv_ = *privileged.get_or_insert_with(|| client_is_admin(h));
+        let (priv_, sid) = identity.get_or_insert_with(|| client_identity(h)).clone();
         let resp = match serde_json::from_slice::<Request>(&frame) {
             Ok(req) => {
                 let (rtx, rrx) = mpsc::channel();
-                if tx.send(Msg::Ipc { req, privileged: priv_, reply: rtx }).is_err() {
+                if tx.send(Msg::Ipc { req, privileged: priv_, caller_sid: sid, reply: rtx }).is_err() {
                     return;
                 }
                 rrx.recv_timeout(Duration::from_secs(30))
@@ -138,12 +138,15 @@ fn serve(h: HANDLE, tx: Sender<Msg>) {
     }
 }
 
-/// Is the client an *elevated* administrator? (Filtered UAC tokens carry the
-/// Administrators SID as deny-only, so CheckTokenMembership returns false.)
-fn client_is_admin(h: HANDLE) -> bool {
+/// Who is the client? Whether it is an *elevated* administrator (filtered
+/// UAC tokens carry the Administrators SID as deny-only, so
+/// CheckTokenMembership returns false), and the SID of its account.
+fn client_identity(h: HANDLE) -> (bool, Option<String>) {
+    use windows::Win32::Security::TOKEN_QUERY;
+    use windows::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
     unsafe {
         if ImpersonateNamedPipeClient(h).is_err() {
-            return false;
+            return (false, None);
         }
         let mut buf = [0u8; 68];
         let mut size = buf.len() as u32;
@@ -151,7 +154,16 @@ fn client_is_admin(h: HANDLE) -> bool {
         let mut member = windows::core::BOOL(0);
         let ok = CreateWellKnownSid(WinBuiltinAdministratorsSid, None, Some(sid), &mut size).is_ok()
             && CheckTokenMembership(None, sid, &mut member).is_ok();
+        // Opened as ourselves: the client only lets us identify it.
+        let mut token = HANDLE::default();
+        let sid = if OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, true, &mut token).is_ok() {
+            let sid = crate::trust::token_user_sid(token);
+            let _ = CloseHandle(token);
+            sid
+        } else {
+            None
+        };
         let _ = RevertToSelf();
-        ok && member.as_bool()
+        (ok && member.as_bool(), sid)
     }
 }

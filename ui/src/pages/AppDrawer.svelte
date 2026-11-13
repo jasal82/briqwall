@@ -82,7 +82,7 @@
               {t("drawer.noAttempts")}
             {:else}
               {t("drawer.attempts", { out: app.blocked_count, in: app.inbound_blocked_count })}{app.last_remote
-                ? ` · ${t("drawer.lastTarget", { remote: targetText(app.last_remote, app.last_host) })}`
+                ? ` · ${t("drawer.lastTarget", { remote: targetText(app.last_remote, app.last_host, app.last_host_verified) })}`
                 : ""}
             {/if}
           </dd>
