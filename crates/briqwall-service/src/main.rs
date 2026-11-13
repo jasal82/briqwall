@@ -85,10 +85,10 @@ fn start(tx: Sender<Msg>, rx: Receiver<Msg>, echo: bool) -> Result<std::thread::
     store::migrate_legacy(&dir, elevated);
     log::info!("Briqwall {} startet (Daten: {}, erhöht: {elevated})", briqwall_common::VERSION, dir.display());
 
-    let mut audit_changed = false;
+    let mut audit_enabled = Vec::new();
     let engine = match open_engine() {
         Ok(e) => {
-            audit_changed = watchers::ensure_audit_policy();
+            audit_enabled = watchers::ensure_audit_policy();
             if let Err(err) = e.enable_net_events() {
                 log::warn!("{err:#}");
             }
@@ -116,7 +116,7 @@ fn start(tx: Sender<Msg>, rx: Receiver<Msg>, echo: bool) -> Result<std::thread::
 
     let handle = std::thread::Builder::new().name("core".into()).spawn(move || {
         let mut core = Core::new(dir, engine);
-        core.set_audit_enabled_by_us(audit_changed);
+        core.note_audit_enabled(audit_enabled);
         core.run(rx);
     })?;
     watchers::spawn_process_watcher(tx.clone());
@@ -269,8 +269,9 @@ fn uninstall(purge: bool) -> Result<()> {
     let engine = open_engine()?;
     engine.uninstall()?;
     println!("{}", t("Alle WFP-Filter, Sublayer und Provider von Briqwall entfernt.", "Removed all Briqwall WFP filters, sublayer and provider."));
-    if state.audit_enabled_by_us {
-        watchers::revert_audit_policy();
+    let ours = state.audit_to_revert();
+    if !ours.is_empty() {
+        watchers::revert_audit_policy(&ours);
         println!("{}", t("Audit-Richtlinie zurückgesetzt.", "Audit policy restored."));
     }
     if purge {

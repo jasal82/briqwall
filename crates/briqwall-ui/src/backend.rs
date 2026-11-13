@@ -197,9 +197,34 @@ pub fn spawn_poller(app: AppHandle, shared: Arc<Shared>, on_status: OnStatus) {
         .expect("spawn poller");
 }
 
+/// Where the poller stands in the service's numbering of events and app-list
+/// revisions. Both start over when the service does (update, crash, reboot
+/// of the service only), and its start time tells one instance from the next.
+#[derive(Default)]
+struct Cursor {
+    started: u64,
+    last_seq: u64,
+    apps_rev: u64,
+}
+
+impl Cursor {
+    /// Note which service instance answered. `true` if it is a different one
+    /// than before: the old positions mean nothing to it and are dropped.
+    /// Keeping them would hide every event until the new instance had counted
+    /// past the old one's last number – no requests, no notifications.
+    fn observe(&mut self, started: u64) -> bool {
+        let restarted = self.started != 0 && self.started != started;
+        if restarted {
+            self.last_seq = 0;
+            self.apps_rev = 0;
+        }
+        self.started = started;
+        restarted
+    }
+}
+
 fn poll_loop(app: AppHandle, shared: Arc<Shared>, on_status: OnStatus) {
-    let mut last_seq = 0u64;
-    let mut apps_rev = 0u64;
+    let mut cursor = Cursor::default();
     let mut first = true;
     let mut last_state_json = String::new();
 
@@ -230,7 +255,13 @@ fn poll_loop(app: AppHandle, shared: Arc<Shared>, on_status: OnStatus) {
         loop {
             let res: anyhow::Result<()> = (|| {
                 let Response::Status(status) = client.call(&Request::Status)? else { anyhow::bail!("Status") };
-                let apps = if status.revision != apps_rev {
+                if cursor.observe(status.started) {
+                    // Events of the previous instance carry numbers the new
+                    // one hands out again; the frontend drops its copy too
+                    // when it sees the numbering start over.
+                    shared.snap.lock().unwrap().events.clear();
+                }
+                let apps = if status.revision != cursor.apps_rev {
                     match client.call(&Request::Apps)? {
                         Response::Apps(a) => Some(a),
                         _ => None,
@@ -238,17 +269,17 @@ fn poll_loop(app: AppHandle, shared: Arc<Shared>, on_status: OnStatus) {
                 } else {
                     None
                 };
-                let Response::Events(events) = client.call(&Request::Events { after: last_seq })? else {
+                let Response::Events(events) = client.call(&Request::Events { after: cursor.last_seq })? else {
                     anyhow::bail!("Events")
                 };
-                apps_rev = status.revision;
+                cursor.apps_rev = status.revision;
 
                 if !first && shared.notifications.load(Ordering::Relaxed) {
                     notify(&events);
                 }
                 first = false;
                 if let Some(e) = events.last() {
-                    last_seq = e.seq;
+                    cursor.last_seq = e.seq;
                 }
 
                 {
@@ -328,4 +359,26 @@ fn sleep_or_poke(shared: &Shared, d: Duration) {
 /// Typographic quotes matching the UI language.
 fn quoted(name: &str) -> String {
     format!("{}{name}{}", t("„", "“"), t("“", "”"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn positions_start_over_with_a_new_service_instance() {
+        let mut c = Cursor::default();
+        assert!(!c.observe(1000), "first contact is not a restart");
+        c.last_seq = 742;
+        c.apps_rev = 91;
+        assert!(!c.observe(1000), "same instance");
+        assert_eq!((c.last_seq, c.apps_rev), (742, 91));
+
+        // The service was restarted: it numbers its events from 1 again.
+        assert!(c.observe(1300));
+        assert_eq!((c.last_seq, c.apps_rev), (0, 0), "ask for everything the new instance has");
+        c.last_seq = 3;
+        assert!(!c.observe(1300));
+        assert_eq!(c.last_seq, 3);
+    }
 }

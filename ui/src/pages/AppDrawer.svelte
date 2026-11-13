@@ -28,7 +28,10 @@
 
   function setRule(a: AppInfo, dir: "outbound" | "inbound", v: RuleAccess) {
     const cur = a.rule ?? { outbound: "Auto" as RuleAccess, inbound: "Auto" as RuleAccess, expires: null, created: now() };
-    const rule = { ...cur, [dir]: v, expires: null, created: now() };
+    // The end date belongs to the rule as a whole. A new choice for the
+    // internet is a new decision and lasts; changing the inbound side must
+    // not quietly turn "allowed for an hour" into "allowed for good".
+    const rule = { ...cur, [dir]: v, expires: dir === "outbound" ? null : cur.expires, created: now() };
     const which = dir === "outbound" ? t("drawer.internet.short") : t("drawer.inbound.short");
     store.act({ SetRule: { key: a.key, rule } }, `${a.name}: ${which} ${q(ruleLabel(v))}`);
   }
@@ -67,6 +70,9 @@
           <span class="label">{t("drawer.inbound")}</span>
           <Seg label={t("drawer.inbound")} {options} value={app.rule?.inbound ?? "Auto"} onchange={(v) => setRule(app, "inbound", v)} />
           <span class="faint">{t("drawer.auto", { verdict: accessLabel(app.auto_in).toLowerCase() })}</span>
+          {#if app.rule?.expires && app.rule.inbound !== "Auto"}
+            <span class="faint" style="color:var(--warn)"><Icon name="clock" size={12} /> {t("drawer.expires", { when: ago(app.rule.expires) })}</span>
+          {/if}
         </div>
         <OriginInfo {app} />
         <dl class="kv">

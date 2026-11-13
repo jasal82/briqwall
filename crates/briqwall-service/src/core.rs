@@ -131,8 +131,16 @@ impl Core {
         core
     }
 
-    pub fn set_audit_enabled_by_us(&mut self, v: bool) {
-        if v && !self.state.audit_enabled_by_us {
+    /// Remember which audit subcategories this start had to switch on.
+    pub fn note_audit_enabled(&mut self, subcategories: Vec<String>) {
+        for sc in subcategories {
+            if !self.state.audit_enabled.contains(&sc) {
+                self.state.audit_enabled.push(sc);
+                self.dirty = true;
+            }
+        }
+        // Older versions only read the flag.
+        if !self.state.audit_enabled.is_empty() && !self.state.audit_enabled_by_us {
             self.state.audit_enabled_by_us = true;
             self.dirty = true;
         }

@@ -27,6 +27,10 @@ pub struct State {
     /// We enabled WFP audit events and should turn them off on uninstall.
     #[serde(default)]
     pub audit_enabled_by_us: bool,
+    /// Which audit subcategories (GUID strings) we enabled. Empty with the
+    /// flag above set: recorded by a version that did not tell them apart.
+    #[serde(default)]
+    pub audit_enabled: Vec<String>,
     /// Public keys (hex SPKI) of the Windows Hello credentials that may sign
     /// approvals, one per Windows account.
     #[serde(default)]
@@ -48,6 +52,18 @@ pub struct HelloKey {
 }
 
 impl State {
+    /// Audit subcategories to switch off again on uninstall: the ones this
+    /// service enabled, not those the administrator had on before.
+    pub fn audit_to_revert(&self) -> Vec<String> {
+        if !self.audit_enabled.is_empty() {
+            self.audit_enabled.clone()
+        } else if self.audit_enabled_by_us {
+            crate::watchers::AUDIT_SUBCATEGORIES.iter().map(|(sc, _)| sc.to_string()).collect()
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Move a single pre-existing Hello key into the per-account list. It
     /// keeps working; it just has no account attached to it.
     pub fn migrate(&mut self) {
@@ -298,6 +314,22 @@ pub fn init_logging(dir: &Path, echo: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uninstall_reverts_only_the_audit_settings_we_made() {
+        let both: Vec<String> = crate::watchers::AUDIT_SUBCATEGORIES.iter().map(|(sc, _)| sc.to_string()).collect();
+        let mut s = State::default();
+        assert!(s.audit_to_revert().is_empty(), "the administrator's own setting stays");
+        // Recorded by an older version: it only knew "something was enabled".
+        s.audit_enabled_by_us = true;
+        assert_eq!(s.audit_to_revert(), both);
+        // One of the two was already on when Briqwall was installed.
+        s.audit_enabled = vec![both[1].clone()];
+        assert_eq!(s.audit_to_revert(), vec![both[1].clone()]);
+        // Older state files without the list still load.
+        let old: State = serde_json::from_str(r#"{"settings":{"mode":"Balanced","previous_mode":"Balanced","lan_discovery":true,"learn_publishers":true,"learned_publishers":[],"network_trust":{}},"apps":{},"audit_enabled_by_us":true}"#).unwrap();
+        assert_eq!(old.audit_to_revert(), both);
+    }
 
     /// A data folder that someone else created beforehand – with a policy of
     /// their own inside – must not be used as it is.

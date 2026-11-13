@@ -119,6 +119,14 @@ impl DevMap {
                 self.map.push((dev, letter.to_lowercase()));
             }
         }
+        // Volumes without a drive letter: mounted into a folder, or not
+        // mounted at all. Without them a program there would be blocked
+        // without ever showing up as a request.
+        for (dev, path) in mounted_volumes() {
+            if !self.map.iter().any(|(known, _)| *known == dev) {
+                self.map.push((dev, path));
+            }
+        }
     }
 
     /// `\device\harddiskvolume3\windows\x.exe` -> `c:\windows\x.exe` (lower-case).
@@ -143,6 +151,45 @@ impl DevMap {
         }
         None
     }
+}
+
+/// Every volume Windows knows, as (NT device, Win32 path), both lower-case
+/// and without trailing backslash. The path is the drive letter or folder
+/// the volume is mounted at, or its `\\?\Volume{…}` name if it has neither.
+fn mounted_volumes() -> Vec<(String, String)> {
+    use windows::Win32::Storage::FileSystem::{
+        FindFirstVolumeW, FindNextVolumeW, FindVolumeClose, GetVolumePathNamesForVolumeNameW,
+    };
+    let mut out = Vec::new();
+    unsafe {
+        let mut name = [0u16; 64]; // "\\?\Volume{GUID}\" is 49 characters
+        let Ok(find) = FindFirstVolumeW(&mut name) else { return out };
+        loop {
+            let volume = from_wide(&name);
+            // QueryDosDevice wants the name without prefix and trailing backslash.
+            if let Some(inner) = volume.strip_prefix(r"\\?\").and_then(|v| v.strip_suffix('\\')) {
+                let w = wide(inner);
+                let mut dev = [0u16; 512];
+                if QueryDosDeviceW(PCWSTR(w.as_ptr()), Some(&mut dev)) > 0 {
+                    let wvol = wide(&volume);
+                    let mut paths = [0u16; 1024];
+                    let mut len = 0u32;
+                    // A list of strings; the first is the preferred mount point.
+                    let mounted = GetVolumePathNamesForVolumeNameW(PCWSTR(wvol.as_ptr()), Some(&mut paths), &mut len)
+                        .map(|()| from_wide(&paths))
+                        .unwrap_or_default();
+                    let path = if mounted.is_empty() { volume.clone() } else { mounted };
+                    out.push((from_wide(&dev).to_lowercase(), path.trim_end_matches('\\').to_lowercase()));
+                }
+            }
+            name = [0u16; 64];
+            if FindNextVolumeW(find, &mut name).is_err() {
+                break;
+            }
+        }
+        let _ = FindVolumeClose(find);
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -204,37 +251,101 @@ pub unsafe extern "system" fn net_event_callback(ctx: *mut core::ffi::c_void, ev
     let _ = ctx.tx.send(Msg::Net(evt));
 }
 
+/// Audit subcategories WFP needs for classify-drop events:
+/// Filtering Platform Connection, Filtering Platform Packet Drop.
+pub const AUDIT_SUBCATEGORIES: [(&str, u128); 2] = [
+    ("{0CCE9226-69AE-11D9-BED3-505054503030}", 0x0CCE9226_69AE_11D9_BED3_505054503030),
+    ("{0CCE9225-69AE-11D9-BED3-505054503030}", 0x0CCE9225_69AE_11D9_BED3_505054503030),
+];
+
 /// WFP only produces classify-drop events if the corresponding audit
-/// subcategories are enabled. Uses auditpol with GUIDs (language independent).
-/// Returns true if we changed the setting (so uninstall can revert it).
-pub fn ensure_audit_policy() -> bool {
-    // Filtering Platform Connection, Filtering Platform Packet Drop
-    const SUBCATS: [&str; 2] = ["{0CCE9226-69AE-11D9-BED3-505054503030}", "{0CCE9225-69AE-11D9-BED3-505054503030}"];
-    let mut changed = false;
+/// subcategories are enabled. Returns the subcategories (GUID strings) that
+/// *we* switched on, so uninstall reverts exactly those and leaves alone
+/// what the administrator had enabled before.
+pub fn ensure_audit_policy() -> Vec<String> {
+    let mut enabled_by_us = Vec::new();
     let auditpol = auditpol_exe();
-    for sc in SUBCATS {
-        let cur = std::process::Command::new(&auditpol)
-            .args(["/get", &format!("/subcategory:{sc}"), "/r"])
-            .output();
-        let enabled = cur
-            .ok()
-            .map(|o| {
-                let s = String::from_utf8_lossy(&o.stdout).to_lowercase();
-                // CSV: "...,Inclusion Setting,..." values like "Failure" / "Success and Failure"
-                s.lines().skip(1).any(|l| l.contains("failure") || l.contains("fehler"))
-            })
-            .unwrap_or(false);
+    let privileged = enable_security_privilege();
+    for (sc, guid) in AUDIT_SUBCATEGORIES {
+        // Ask Windows directly: the answer is a number. Only if that fails,
+        // read the words auditpol prints – they depend on the display
+        // language, and an unknown language reads as "off". The setting would
+        // then be recorded as ours and switched off again on uninstall.
+        let enabled = match privileged.then(|| failure_auditing(guid)).flatten() {
+            Some(on) => on,
+            None => std::process::Command::new(&auditpol)
+                .args(["/get", &format!("/subcategory:{sc}"), "/r"])
+                .output()
+                .map(|o| csv_says_failure(&String::from_utf8_lossy(&o.stdout)))
+                .unwrap_or(false),
+        };
         if !enabled {
             let ok = std::process::Command::new(&auditpol)
                 .args(["/set", &format!("/subcategory:{sc}"), "/failure:enable"])
                 .status()
                 .map(|s| s.success())
                 .unwrap_or(false);
-            changed |= ok;
+            if ok {
+                enabled_by_us.push(sc.to_string());
+            }
             log::info!("Audit-Richtlinie {sc} aktiviert: {ok}");
         }
     }
-    changed
+    enabled_by_us
+}
+
+/// CSV of `auditpol /get /r`: "...,Inclusion Setting,..." with values like
+/// "Failure" / "Success and Failure" – in the display language of Windows.
+fn csv_says_failure(stdout: &str) -> bool {
+    stdout.to_lowercase().lines().skip(1).any(|l| l.contains("failure") || l.contains("fehler"))
+}
+
+/// Is failure auditing on for this subcategory? `None` if Windows does not
+/// tell (the call needs the security privilege).
+fn failure_auditing(subcategory: u128) -> Option<bool> {
+    use windows::Win32::Security::Authentication::Identity::{AuditFree, AuditQuerySystemPolicy, AUDIT_POLICY_INFORMATION};
+    const POLICY_AUDIT_EVENT_FAILURE: u32 = 0x2;
+    let guids = [windows::core::GUID::from_u128(subcategory)];
+    unsafe {
+        let mut info: *mut AUDIT_POLICY_INFORMATION = std::ptr::null_mut();
+        if !AuditQuerySystemPolicy(&guids, &mut info) || info.is_null() {
+            return None;
+        }
+        let on = (*info).AuditingInformation & POLICY_AUDIT_EVENT_FAILURE != 0;
+        AuditFree(info as *const _);
+        Some(on)
+    }
+}
+
+/// Reading the audit policy needs SeSecurityPrivilege. SYSTEM and elevated
+/// administrators hold it, but switched off.
+fn enable_security_privilege() -> bool {
+    use windows::Win32::Foundation::{GetLastError, ERROR_NOT_ALL_ASSIGNED, HANDLE, LUID};
+    use windows::Win32::Security::{
+        AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES,
+        TOKEN_PRIVILEGES, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    let name = wide("SeSecurityPrivilege");
+    unsafe {
+        let mut luid = LUID::default();
+        if LookupPrivilegeValueW(None, PCWSTR(name.as_ptr()), &mut luid).is_err() {
+            return false;
+        }
+        let mut token = HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token).is_err() {
+            return false;
+        }
+        let privileges = TOKEN_PRIVILEGES {
+            PrivilegeCount: 1,
+            Privileges: [LUID_AND_ATTRIBUTES { Luid: luid, Attributes: SE_PRIVILEGE_ENABLED }],
+        };
+        let adjusted = AdjustTokenPrivileges(token, false, Some(&privileges), 0, None, None).is_ok();
+        // Success with this code means: the token does not hold the privilege.
+        let held = adjusted && GetLastError() != ERROR_NOT_ALL_ASSIGNED;
+        let _ = CloseHandle(token);
+        held
+    }
 }
 
 /// Full path of auditpol.exe. A bare name would be looked up next to our own
@@ -243,9 +354,14 @@ fn auditpol_exe() -> String {
     format!("{}\\system32\\auditpol.exe", crate::trust::windows_dir())
 }
 
-pub fn revert_audit_policy() {
+/// Switch failure auditing off again for the given subcategories (those
+/// [`ensure_audit_policy`] reported). Anything else is ignored.
+pub fn revert_audit_policy(subcategories: &[String]) {
     let auditpol = auditpol_exe();
-    for sc in ["{0CCE9226-69AE-11D9-BED3-505054503030}", "{0CCE9225-69AE-11D9-BED3-505054503030}"] {
+    for (sc, _) in AUDIT_SUBCATEGORIES {
+        if !subcategories.iter().any(|s| s.eq_ignore_ascii_case(sc)) {
+            continue;
+        }
         let _ = std::process::Command::new(&auditpol)
             .args(["/set", &format!("/subcategory:{sc}"), "/failure:disable"])
             .status();
@@ -480,6 +596,59 @@ pub fn parse_drop_audit(xml: &str) -> Option<DropAudit> {
 #[cfg(test)]
 mod audit_tests {
     use super::*;
+
+    #[test]
+    fn devices_map_to_the_paths_programs_run_from() {
+        let mut m = DevMap::default();
+        m.refresh();
+        let win = crate::trust::windows_dir();
+        let letter = &win[..2];
+        let dev = m.map.iter().find(|(_, p)| p == letter).map(|(d, _)| d.clone()).expect("system volume is mapped");
+        assert_eq!(m.to_dos(&format!(r"{dev}\Windows\X.exe")), Some(format!(r"{letter}\windows\x.exe")));
+        assert_eq!(m.to_dos(r"\Device\Mup\Server\Share\x.exe").as_deref(), Some(r"\\server\share\x.exe"));
+        assert_eq!(m.to_dos(r"\device\mup\"), None);
+        assert_eq!(m.to_dos(r"\device\nosuchvolume99\x.exe"), None);
+
+        // Every volume Windows knows resolves, with or without a drive letter.
+        let volumes = mounted_volumes();
+        assert!(!volumes.is_empty());
+        for (device, path) in volumes {
+            println!("{device} -> {path}");
+            assert!(!path.is_empty() && !path.ends_with('\\'));
+            assert!(m.to_dos(&format!(r"{device}\x.exe")).is_some(), "{device}");
+        }
+    }
+
+    #[test]
+    fn audit_state_does_not_depend_on_the_language_when_windows_answers() {
+        // English and German auditpol output is understood …
+        let csv = |setting: &str| format!("Machine Name,Policy Target,Subcategory,Subcategory GUID,Inclusion Setting,Exclusion Setting\nPC,System,X,{{0CCE9226-69AE-11D9-BED3-505054503030}},{setting},\n");
+        assert!(csv_says_failure(&csv("Failure")));
+        assert!(csv_says_failure(&csv("Success and Failure")));
+        assert!(csv_says_failure(&csv("Fehler")));
+        assert!(!csv_says_failure(&csv("No Auditing")));
+        // … French is not, which is why the text is only the fallback.
+        assert!(!csv_says_failure(&csv("Échec")));
+
+        // Without the privilege (tests run as a normal user) Windows does not
+        // answer; with it (CI runs elevated) it answers for both subcategories.
+        let privileged = enable_security_privilege();
+        for (_, guid) in AUDIT_SUBCATEGORIES {
+            let state = failure_auditing(guid);
+            println!("privileged={privileged} failure auditing={state:?}");
+            if privileged {
+                assert!(state.is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn only_listed_subcategories_are_known() {
+        for (text, guid) in AUDIT_SUBCATEGORIES {
+            let hex = format!("{guid:032X}");
+            assert_eq!(text.replace(['{', '}', '-'], ""), hex);
+        }
+    }
 
     #[test]
     fn parses_5157_event() {

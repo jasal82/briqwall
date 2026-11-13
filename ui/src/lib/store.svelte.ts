@@ -68,7 +68,14 @@ class Store {
       if (s.status) this.status = s.status;
     });
     be.onApps((a) => (this.apps = a));
-    be.onEvents((e) => (this.events = [...this.events, ...e].slice(-500)));
+    be.onEvents((e) => {
+      // The service numbers its events from 1 again after a restart. What is
+      // left from before would share numbers with the new ones (they key the
+      // lists), so the log starts over with the new instance.
+      const last = this.events.at(-1);
+      const restarted = last !== undefined && e.length > 0 && e[0].seq <= last.seq;
+      this.events = [...(restarted ? [] : this.events), ...e].slice(-500);
+    });
     be.onNavigate((p) => this.go(p as Page));
     const [snap, prefs] = await Promise.all([be.snapshot(), be.prefs()]);
     this.connected = snap.connected;
