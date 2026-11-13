@@ -99,6 +99,7 @@ export const en = {
     "A Windows system file outside the Windows folder, in a place any program can write to. Copied and renamed system tools are a common disguise.",
   "reason.Unverified":
     "Runs from a network share. Briqwall does not open files there, so it knows neither who made this program nor whether it was changed.",
+  "reason.TrustedFolder": "Installed in the program folder “{publisher}”, which you trusted as a whole.",
   "reason.RiskyLocation":
     "Signed by the well-known publisher “{publisher}”, but started from a folder for downloads or temporary files, where any program can put files next to it.",
 
@@ -186,6 +187,15 @@ export const en = {
   "bulk.blocked.other": "{n} apps blocked",
   "bulk.snoozed.one": "1 request hidden",
   "bulk.snoozed.other": "{n} requests hidden",
+  "bulk.riskyLeft.one": "1 high-risk request is left out of “Allow” – decide it on its own",
+  "bulk.riskyLeft.other": "{n} high-risk requests are left out of “Allow” – decide them one by one",
+  "req.folder": "Everything in “{folder}”",
+  "req.folder.hint": "All programs installed in this folder – one decision instead of one per tool",
+  "warn.elevated.title": "Briqwall is running with administrator rights",
+  "warn.elevated.asAdmin":
+    "Changes that loosen protection are applied without asking – for Briqwall and for every other program started this way. Start Briqwall normally to be asked again.",
+  "warn.elevated.uacOff":
+    "User Account Control is switched off on this PC. Every program you start can loosen the firewall without anyone being asked. Switch it back on in the Windows settings to get that protection.",
 
   // process origin
   "origin.title": "Triggered by",
@@ -281,6 +291,14 @@ export const en = {
   "event.helloEnrolled": "Windows Hello set up for confirmations",
   "event.helloRemoved": "Windows Hello for confirmations turned off",
   "event.applyFailed": "Rules could not be applied",
+  "event.folderTrusted": "Program folder trusted: {folder}",
+  "event.folderUntrusted": "Program folder no longer trusted: {folder}",
+  "event.startedByBlocked": "{by} started {name}",
+  "event.startedByBlocked.sub": "{by} is not allowed online itself – whatever it hands over is fetched all the same",
+  "event.by.Hello": "confirmed by {account} with Windows Hello",
+  "event.by.Hello.anon": "confirmed with Windows Hello",
+  "event.by.Admin": "confirmed by {account} as administrator",
+  "event.by.Admin.anon": "confirmed as administrator",
 
   // settings
   "settings.general": "General",
@@ -352,6 +370,9 @@ export const en = {
   "toast.added": "{name} added – choose a rule",
   "toast.alreadyKnown": "{name} is already in the list",
   "toast.saved": "Setting saved",
+  "toast.folderTrusted": "Programs in “{folder}” are allowed",
+  "toast.folderRemoved": "“{folder}” is no longer trusted as a whole",
+  "settings.folder": "Trusted program folder – its installed programs are allowed even without a signature",
   "toast.followsWindows": "Follows Windows again",
   "toast.publisherRemoved": "{publisher} forgotten",
   "toast.lockdownOn": "Lockdown active",

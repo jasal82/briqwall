@@ -154,6 +154,15 @@
         </button>
       </div>
     {/each}
+    {#each s.settings.trusted_folders ?? [] as f (f)}
+      <div class="setting">
+        <div style="width:36px"></div>
+        <div class="grow"><b style="font-weight:500">{f}</b><span class="faint">{t("settings.folder")}</span></div>
+        <button class="btn ghost sm" onclick={() => store.act({ UntrustFolder: f }, t("toast.folderRemoved", { folder: f }))}>
+          {t("common.remove")}
+        </button>
+      </div>
+    {/each}
   </div>
 
   <h2>{t("settings.how")}</h2>

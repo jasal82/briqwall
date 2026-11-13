@@ -102,6 +102,7 @@ export const de: Dict = {
     "Eine Windows-Systemdatei außerhalb des Windows-Ordners, an einem Ort, an den jedes Programm schreiben kann. Kopierte und umbenannte Systemwerkzeuge sind eine verbreitete Tarnung.",
   "reason.Unverified":
     "Läuft von einer Netzwerkfreigabe. Briqwall öffnet dort keine Dateien und weiß deshalb weder, von wem dieses Programm stammt, noch ob es verändert wurde.",
+  "reason.TrustedFolder": "Installiert im Programmordner „{publisher}“, dem Sie als Ganzem vertraut haben.",
   "reason.RiskyLocation":
     "Signiert vom bekannten Herausgeber „{publisher}“, aber aus einem Ordner für Downloads oder temporäre Dateien gestartet, in dem jedes Programm Dateien danebenlegen kann.",
 
@@ -191,6 +192,15 @@ export const de: Dict = {
   "bulk.blocked.other": "{n} Apps blockiert",
   "bulk.snoozed.one": "1 Anfrage ausgeblendet",
   "bulk.snoozed.other": "{n} Anfragen ausgeblendet",
+  "bulk.riskyLeft.one": "1 Anfrage mit hohem Risiko bleibt bei „Erlauben“ außen vor – bitte einzeln entscheiden",
+  "bulk.riskyLeft.other": "{n} Anfragen mit hohem Risiko bleiben bei „Erlauben“ außen vor – bitte einzeln entscheiden",
+  "req.folder": "Alles in „{folder}“",
+  "req.folder.hint": "Alle in diesem Ordner installierten Programme – eine Entscheidung statt einer pro Werkzeug",
+  "warn.elevated.title": "Briqwall läuft mit Administratorrechten",
+  "warn.elevated.asAdmin":
+    "Änderungen, die den Schutz lockern, werden ohne Nachfrage übernommen – für Briqwall und für jedes andere so gestartete Programm. Starten Sie Briqwall normal, um wieder gefragt zu werden.",
+  "warn.elevated.uacOff":
+    "Die Benutzerkontensteuerung ist auf diesem PC ausgeschaltet. Jedes Programm, das Sie starten, kann die Firewall lockern, ohne dass jemand gefragt wird. Schalten Sie sie in den Windows-Einstellungen wieder ein, um diesen Schutz zu erhalten.",
 
   // Prozess-Herkunft
   "origin.title": "Ausgelöst von",
@@ -286,6 +296,14 @@ export const de: Dict = {
   "event.helloEnrolled": "Windows Hello für Freigaben eingerichtet",
   "event.helloRemoved": "Windows Hello für Freigaben deaktiviert",
   "event.applyFailed": "Regeln konnten nicht angewendet werden",
+  "event.folderTrusted": "Programmordner vertraut: {folder}",
+  "event.folderUntrusted": "Programmordner nicht mehr vertraut: {folder}",
+  "event.startedByBlocked": "{by} hat {name} gestartet",
+  "event.startedByBlocked.sub": "{by} darf selbst nicht ins Netz – was es übergibt, wird trotzdem geladen",
+  "event.by.Hello": "bestätigt von {account} mit Windows Hello",
+  "event.by.Hello.anon": "bestätigt mit Windows Hello",
+  "event.by.Admin": "bestätigt von {account} als Administrator",
+  "event.by.Admin.anon": "bestätigt als Administrator",
 
   // Einstellungen
   "settings.general": "Allgemein",
@@ -358,6 +376,9 @@ export const de: Dict = {
   "toast.added": "{name} hinzugefügt – Regel wählen",
   "toast.alreadyKnown": "{name} ist bereits in der Liste",
   "toast.saved": "Einstellung gespeichert",
+  "toast.folderTrusted": "Programme in „{folder}“ sind erlaubt",
+  "toast.folderRemoved": "„{folder}“ wird nicht mehr als Ganzes vertraut",
+  "settings.folder": "Vertrauter Programmordner – dort installierte Programme sind auch ohne Signatur erlaubt",
   "toast.followsWindows": "Folgt wieder Windows",
   "toast.publisherRemoved": "{publisher} vergessen",
   "toast.lockdownOn": "Notfall-Sperre aktiv",

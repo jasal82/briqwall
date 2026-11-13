@@ -22,6 +22,11 @@ const W_APP_BLOCK: u64 = 12;
 const W_APP_PERMIT: u64 = 10;
 const W_DEFAULT: u64 = 0;
 
+/// Network category Windows assigned to the interface a connection uses
+/// (NL_INTERFACE_NETWORK_CATEGORY_STATE): 1 public, 2 private, 3 domain.
+const PROFILE_PRIVATE: u32 = 2;
+const PROFILE_DOMAIN: u32 = 3;
+
 const PROTO_ICMP: u8 = 1;
 const PROTO_UDP: u8 = 17;
 const PROTO_ICMPV6: u8 = 58;
@@ -180,6 +185,7 @@ pub fn app_filters(
     in_policy: DirPolicy,
     mode: Mode,
     network_trusted: bool,
+    bind_profile: bool,
 ) -> Compiled {
     let mut v = Vec::new();
     if matches!(mode, Mode::Off | Mode::Lockdown) {
@@ -209,6 +215,17 @@ pub fn app_filters(
                 c4.extend(lan_v4());
                 let mut c6 = vec![app()];
                 c6.extend(lan_v6());
+                // Filters outlive the service (crash, stop, the minutes
+                // before it starts after boot). A permit for the home network
+                // must not still be open when the laptop wakes up in a café:
+                // it only matches while Windows itself has the connection
+                // down as private or domain.
+                if dir == Direction::In && bind_profile {
+                    for c in [&mut c4, &mut c6] {
+                        c.push(Cond::Profile(PROFILE_PRIVATE));
+                        c.push(Cond::Profile(PROFILE_DOMAIN));
+                    }
+                }
                 v.push((spec(&format!("{name} {d} LAN v4"), l4, W_APP_PERMIT, true, c4), Purpose::Other));
                 v.push((spec(&format!("{name} {d} LAN v6"), l6, W_APP_PERMIT, true, c6), Purpose::Other));
             }
@@ -247,7 +264,7 @@ mod tests {
     #[test]
     fn off_has_no_filters() {
         assert!(base_filters(Mode::Off, None).is_empty());
-        assert!(app_filters("k", "n", &[1, 2], rule(Access::Allow), rule(Access::Allow), Mode::Off, true).is_empty());
+        assert!(app_filters("k", "n", &[1, 2], rule(Access::Allow), rule(Access::Allow), Mode::Off, true, false).is_empty());
     }
 
     #[test]
@@ -292,17 +309,35 @@ mod tests {
 
     #[test]
     fn inbound_lan_only_on_trusted_network() {
-        let trusted = app_filters("k", "n", &[1], auto(Access::Ask), auto(Access::Lan), Mode::Balanced, true);
-        let public = app_filters("k", "n", &[1], auto(Access::Ask), auto(Access::Lan), Mode::Balanced, false);
+        let trusted = app_filters("k", "n", &[1], auto(Access::Ask), auto(Access::Lan), Mode::Balanced, true, false);
+        let public = app_filters("k", "n", &[1], auto(Access::Ask), auto(Access::Lan), Mode::Balanced, false, false);
         assert_eq!(trusted.len(), 2);
         assert!(public.is_empty());
     }
 
+    /// Inbound LAN permits can be tied to what Windows says about the network,
+    /// so they close by themselves when the service is not there to do it.
+    #[test]
+    fn inbound_lan_can_follow_the_windows_profile() {
+        let profiles = |f: &Compiled| -> Vec<Vec<u32>> {
+            f.iter().map(|(s, _)| s.conds.iter().filter_map(|c| if let Cond::Profile(p) = c { Some(*p) } else { None }).collect()).collect()
+        };
+        let bound = app_filters("k", "n", &[1], auto(Access::Ask), auto(Access::Lan), Mode::Balanced, true, true);
+        assert_eq!(profiles(&bound), vec![vec![2, 3], vec![2, 3]], "private or domain, v4 and v6");
+        let unbound = app_filters("k", "n", &[1], auto(Access::Ask), auto(Access::Lan), Mode::Balanced, true, false);
+        assert_eq!(profiles(&unbound), vec![Vec::<u32>::new(), Vec::new()]);
+        // Outbound LAN access and full inbound access are not affected.
+        let out = app_filters("k", "n", &[1], rule(Access::Lan), rule(Access::Allow), Mode::Balanced, true, true);
+        assert!(profiles(&out).iter().all(|p| p.is_empty()));
+        // Still nothing at all on a network Briqwall does not trust.
+        assert!(app_filters("k", "n", &[1], auto(Access::Ask), auto(Access::Lan), Mode::Balanced, false, true).is_empty());
+    }
+
     #[test]
     fn ask_produces_no_permit() {
-        let f = app_filters("k", "n", &[1], auto(Access::Ask), auto(Access::Block), Mode::Strict, true);
+        let f = app_filters("k", "n", &[1], auto(Access::Ask), auto(Access::Block), Mode::Strict, true, false);
         assert!(f.is_empty(), "automatic decisions rely on the default block");
-        let f = app_filters("k", "n", &[1], rule(Access::Block), auto(Access::Block), Mode::Strict, true);
+        let f = app_filters("k", "n", &[1], rule(Access::Block), auto(Access::Block), Mode::Strict, true, false);
         assert_eq!(f.len(), 2);
         assert!(f.iter().all(|(s, p)| !s.permit && matches!(p, Purpose::AppBlock(_, Direction::Out))));
     }

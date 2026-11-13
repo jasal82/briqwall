@@ -271,6 +271,7 @@ impl Cursor {
 fn poll_loop(app: AppHandle, shared: Arc<Shared>, on_status: OnStatus) {
     let mut cursor = Cursor::default();
     let mut first = true;
+    let mut request_toasts = RequestToasts::default();
     let mut have_apps = false;
     let mut last_apps_fetch = Instant::now();
     // Hidden in the tray or minimized: nobody sees the app list.
@@ -334,9 +335,15 @@ fn poll_loop(app: AppHandle, shared: Arc<Shared>, on_status: OnStatus) {
                 };
 
                 if !first && shared.notifications.load(Ordering::Relaxed) {
-                    notify(&events);
+                    // The service hands out its log of earlier runs as well;
+                    // only what happened in this run is news.
+                    let fresh: Vec<&Event> = events.iter().filter(|e| e.time >= status.started).collect();
+                    notify(&fresh, &mut request_toasts);
                 }
                 first = false;
+                if let Some((title, body)) = request_toasts.due(Instant::now()) {
+                    let _ = platform::toast(&title, &body, Some(t("Entscheiden", "Decide")));
+                }
                 if let Some(e) = events.last() {
                     cursor.last_seq = e.seq;
                 }
@@ -376,22 +383,71 @@ fn poll_loop(app: AppHandle, shared: Arc<Shared>, on_status: OnStatus) {
     }
 }
 
-fn notify(events: &[Event]) {
+/// Gathers new requests so that several at once – a program starting its
+/// helpers, a stricter level taking effect – become one notification instead
+/// of a pile, and so that notifications keep a distance from each other.
+#[derive(Default)]
+struct RequestToasts {
+    /// Name and "high risk" of the requests not yet announced.
+    waiting: Vec<(String, bool)>,
+    last_shown: Option<Instant>,
+}
+
+impl RequestToasts {
+    /// Shortest time between two notifications about requests.
+    const QUIET: Duration = Duration::from_secs(10);
+
+    fn add(&mut self, name: &str, high_risk: bool) {
+        if !self.waiting.iter().any(|(n, _)| n == name) {
+            self.waiting.push((name.to_string(), high_risk));
+        }
+    }
+
+    /// Title and text of the notification to show now, if it is time for one.
+    fn due(&mut self, now: Instant) -> Option<(String, String)> {
+        if self.waiting.is_empty() || self.last_shown.is_some_and(|at| now.duration_since(at) < Self::QUIET) {
+            return None;
+        }
+        let waiting = std::mem::take(&mut self.waiting);
+        self.last_shown = Some(now);
+        let high_risk = waiting.iter().any(|(_, high)| *high);
+        if let [(name, _)] = waiting.as_slice() {
+            let body = if high_risk {
+                t("Angehalten – hohes Risiko. Öffnen Sie Briqwall, um zu entscheiden.", "Stopped – high risk. Open Briqwall to decide.")
+            } else {
+                t(
+                    "Briqwall hat die Verbindung angehalten. Klicken Sie, um zu entscheiden.",
+                    "Briqwall stopped the connection. Click to decide.",
+                )
+            };
+            return Some((format!("{} {}", quoted(name), t("möchte ins Netz", "wants to go online")), body.to_string()));
+        }
+        let title = format!("{} {}", waiting.len(), t("Programme möchten ins Netz", "programs want to go online"));
+        let mut names: Vec<String> = waiting.iter().take(3).map(|(n, _)| quoted(n)).collect();
+        if waiting.len() > 3 {
+            names.push("…".into());
+        }
+        let mut body = names.join(", ");
+        if high_risk {
+            body.push_str(t(" – darunter mit hohem Risiko", " – some of them high risk"));
+        }
+        Some((title, body))
+    }
+}
+
+fn notify(events: &[&Event], requests: &mut RequestToasts) {
     for e in events {
         match &e.kind {
-            EventKind::NewRequest { name, risk, .. } => {
-                let body = match risk {
-                    Risk::High => t(
-                        "Angehalten – hohes Risiko. Öffnen Sie Briqwall, um zu entscheiden.",
-                        "Stopped – high risk. Open Briqwall to decide.",
+            EventKind::NewRequest { name, risk, .. } => requests.add(name, *risk == Risk::High),
+            EventKind::StartedByBlocked { name, by_name, .. } => {
+                let _ = platform::toast(
+                    &format!("{} {} {}", quoted(by_name), t("hat gestartet:", "started"), quoted(name)),
+                    t(
+                        "Das startende Programm darf selbst nicht ins Netz. Was es dem gestarteten übergibt, lädt dieses trotzdem.",
+                        "The program that started it is not allowed online itself. Whatever it passes on is fetched all the same.",
                     ),
-                    _ => t(
-                        "Briqwall hat die Verbindung angehalten. Klicken Sie, um zu entscheiden.",
-                        "Briqwall stopped the connection. Click to decide.",
-                    ),
-                };
-                let title = format!("{} {}", quoted(name), t("möchte ins Netz", "wants to go online"));
-                let _ = platform::toast(&title, body, Some(t("Entscheiden", "Decide")));
+                    Some(t("Ansehen", "View")),
+                );
             }
             EventKind::Tampered { name, .. } => {
                 let _ = platform::toast(
@@ -458,6 +514,36 @@ mod tests {
         let old = Cursor { started: 1, last_seq: 0, apps_rev: 5, apps_activity: 0 };
         assert!(!apps_wanted(&old, &status(5, 0), true, true, secs(600)));
         assert!(apps_wanted(&old, &status(6, 0), true, true, secs(0)));
+    }
+
+    #[test]
+    fn several_requests_become_one_notification() {
+        i18n::set("en");
+        let t0 = Instant::now();
+        let mut toasts = RequestToasts::default();
+        assert_eq!(toasts.due(t0), None, "nothing to say");
+
+        // One request: named, as before.
+        toasts.add("QuickNotes", false);
+        let (title, body) = toasts.due(t0).unwrap();
+        assert!(title.contains("QuickNotes") && title.contains("wants to go online"));
+        assert!(body.contains("Click to decide"));
+        assert_eq!(toasts.due(t0), None, "shown once");
+
+        // A burst right after: held back, then one notification for all.
+        for name in ["a", "b", "c", "d", "b"] {
+            toasts.add(name, name == "c");
+        }
+        assert_eq!(toasts.due(t0 + Duration::from_secs(3)), None, "too soon after the last one");
+        let (title, body) = toasts.due(t0 + Duration::from_secs(11)).unwrap();
+        assert!(title.starts_with("4 programs"), "{title}");
+        assert!(body.contains("“a”") && body.contains("“c”") && !body.contains("“d”") && body.contains('…'), "{body}");
+        assert!(body.contains("high risk"));
+        assert_eq!(toasts.due(t0 + Duration::from_secs(60)), None);
+
+        // High risk on its own keeps its warning.
+        toasts.add("Dropper", true);
+        assert!(toasts.due(t0 + Duration::from_secs(60)).unwrap().1.contains("high risk"));
     }
 
     #[test]

@@ -60,7 +60,7 @@ fn prepare(path: &str, known: &KnownFiles, win_dir: &str) -> Option<Facts> {
 
 /// Start the workers. They take paths from `paths` and send each on to the
 /// core, with facts where needed.
-pub fn spawn(paths: Receiver<String>, core: Sender<Msg>, known: KnownFiles, win_dir: String) {
+pub fn spawn(paths: Receiver<(String, u32)>, core: Sender<Msg>, known: KnownFiles, win_dir: String) {
     let paths = Arc::new(Mutex::new(paths));
     // A program often starts several times at once (compilers, browsers).
     // One worker looks at the file; the others have nothing to add.
@@ -69,13 +69,13 @@ pub fn spawn(paths: Receiver<String>, core: Sender<Msg>, known: KnownFiles, win_
         let (paths, core, known, win_dir, busy) = (paths.clone(), core.clone(), known.clone(), win_dir.clone(), busy.clone());
         let res = std::thread::Builder::new().name(format!("evaluate-{i}")).spawn(move || loop {
             let next = paths.lock().map(|rx| rx.recv());
-            let Ok(Ok(path)) = next else { return };
+            let Ok(Ok((path, pid))) = next else { return };
             let key = path.to_lowercase();
             if !busy.lock().map(|mut b| b.insert(key.clone())).unwrap_or(true) {
                 continue;
             }
             let facts = prepare(&path, &known, &win_dir);
-            let sent = core.send(Msg::Process { path, facts });
+            let sent = core.send(Msg::Process { path, facts, pid: Some(pid) });
             if let Ok(mut b) = busy.lock() {
                 b.remove(&key);
             }
@@ -142,25 +142,25 @@ mod tests {
         spawn(path_rx, core_tx, known.clone(), win.clone());
 
         let recv = || match core_rx.recv_timeout(std::time::Duration::from_secs(60)) {
-            Ok(Msg::Process { path, facts }) => (path, facts),
+            Ok(Msg::Process { path, facts, pid: Some(7) }) => (path, facts),
             _ => panic!("no answer from the workers"),
         };
         // Unknown: comes with facts.
-        path_tx.send(notepad.clone()).unwrap();
+        path_tx.send((notepad.clone(), 7)).unwrap();
         let (path, facts) = recv();
         let facts = facts.expect("facts for an unknown program");
         assert_eq!(path, notepad);
         assert!(facts.protected && facts.signature.is_valid());
         // Known and unchanged: just the path.
         known.set(&notepad.to_lowercase(), facts.stamp);
-        path_tx.send(notepad.clone()).unwrap();
+        path_tx.send((notepad.clone(), 7)).unwrap();
         assert!(recv().1.is_none());
         // Forgotten again: facts again.
         known.remove(&notepad.to_lowercase());
-        path_tx.send(notepad.clone()).unwrap();
+        path_tx.send((notepad.clone(), 7)).unwrap();
         assert!(recv().1.is_some());
         // Not on a local disk: never opened here.
-        path_tx.send(r"\\server\share\tool.exe".to_string()).unwrap();
+        path_tx.send((r"\\server\share\tool.exe".to_string(), 7)).unwrap();
         assert!(recv().1.is_none());
     }
 

@@ -300,6 +300,18 @@ pub fn toast(title: &str, body: &str, action: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// Is User Account Control switched on? Without it every program of an
+/// administrator runs with full rights – and may change the firewall without
+/// anyone being asked.
+pub fn uac_enabled() -> bool {
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    winreg::RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System")
+        .and_then(|k| k.get_value::<u32, _>("EnableLUA"))
+        .map(|v| v != 0)
+        .unwrap_or(true)
+}
+
 /// SID and display name of the account this UI runs as. The SID identifies
 /// the Windows Hello key in the service (one key per account).
 pub fn current_user() -> (String, String) {

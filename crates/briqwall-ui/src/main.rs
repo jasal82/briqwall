@@ -337,6 +337,8 @@ struct UiPrefs {
     /// Windows account this UI runs as (SID identifies its Hello key).
     user_sid: String,
     user_name: String,
+    /// User Account Control is on (see `platform::uac_enabled`).
+    uac_enabled: bool,
 }
 
 fn language_pref() -> String {
@@ -366,6 +368,7 @@ fn ui_prefs(shared: State<'_, Arc<Shared>>) -> UiPrefs {
         system_language: i18n::system_language(),
         user_sid: user.0,
         user_name: user.1,
+        uac_enabled: platform::uac_enabled(),
     }
 }
 

@@ -117,7 +117,7 @@ fn start(tx: Sender<Msg>, rx: Receiver<Msg>, echo: bool) -> Result<std::thread::
 
     // New programs: process watcher → workers that check the file → core.
     let known = evaluator::KnownFiles::default();
-    let (path_tx, path_rx) = mpsc::channel();
+    let (path_tx, path_rx) = mpsc::channel::<(String, u32)>();
     evaluator::spawn(path_rx, tx.clone(), known.clone(), trust::windows_dir());
 
     let handle = std::thread::Builder::new().name("core".into()).spawn(move || {
@@ -315,6 +315,7 @@ fn check(path: &str) -> Result<()> {
             lan_discovery: true,
             protected: f.protected,
             location: f.location_hint,
+            trusted_folder: None,
         });
         println!("{:<14}{}={:?} {}={:?} – {:?}", format!("{}:", cli_text::mode_name(mode)), t("aus", "out"), v.out, t("ein", "in"), v.inn, v.reason);
     }

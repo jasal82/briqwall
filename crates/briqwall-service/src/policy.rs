@@ -158,6 +158,8 @@ pub struct Inputs<'a> {
     /// Only SYSTEM/Administrators can modify the file or its folder.
     pub protected: bool,
     pub location: Option<Location>,
+    /// The program folder the app lies in, if the user trusted it as a whole.
+    pub trusted_folder: Option<&'a str>,
 }
 
 pub fn auto_verdict(i: &Inputs) -> Verdict {
@@ -177,7 +179,10 @@ pub fn auto_verdict(i: &Inputs) -> Verdict {
         Category::Lolbin => (Access::Ask, Reason::Tool),
         Category::Installed => match publisher {
             Some(p) => (Access::Allow, Reason::InstalledSigned(p.to_string())),
-            None if strict => (Access::Ask, Reason::InstalledUnsignedStrict),
+            None if strict => match i.trusted_folder {
+                Some(folder) => (Access::Allow, Reason::TrustedFolder(folder.to_string())),
+                None => (Access::Ask, Reason::InstalledUnsignedStrict),
+            },
             None => (Access::Allow, Reason::Installed),
         },
         Category::UserSpace => match i.signature {
@@ -235,6 +240,67 @@ pub fn risk(app: &AppInfo, learned: &[String]) -> Risk {
             }
         }
     }
+}
+
+/// The program folder an installed app belongs to: the unit that can be
+/// trusted as a whole. Below one of the Windows program folders that is the
+/// product's own folder (`C:\Program Files\Git` for everything under it),
+/// elsewhere the folder the executable lies in. `None` where no sensible
+/// folder exists (directly in a drive root or program folder).
+pub fn install_folder(path: &str, program_dirs: &[String]) -> Option<String> {
+    let lower = path.to_lowercase();
+    for dir in program_dirs {
+        let Some(rest) = lower.strip_prefix(dir.as_str()).and_then(|r| r.strip_prefix('\\')) else { continue };
+        // The first folder below, provided the file is inside it.
+        let product = rest.split('\\').next().filter(|p| !p.is_empty() && rest.len() > p.len())?;
+        return Some(path[..dir.len() + 1 + product.len()].to_string());
+    }
+    let parent = &path[..path.rfind('\\')?];
+    // At least "x:\name" – never a whole drive.
+    (parent.len() > 3 && parent.contains('\\')).then(|| parent.to_string())
+}
+
+/// The trusted folder a path lies in, if any.
+pub fn trusted_folder<'a>(path: &str, folders: &'a [String]) -> Option<&'a str> {
+    let lower = path.to_lowercase();
+    folders
+        .iter()
+        .find(|f| lower.strip_prefix(f.to_lowercase().as_str()).is_some_and(|rest| rest.starts_with('\\')))
+        .map(String::as_str)
+}
+
+/// Programs that display web content for whoever starts them. Started by a
+/// program that is itself blocked, they are its way to the network.
+const BROWSERS: &[&str] = &[
+    "chrome.exe",
+    "msedge.exe",
+    "msedgewebview2.exe",
+    "firefox.exe",
+    "brave.exe",
+    "opera.exe",
+    "vivaldi.exe",
+    "iexplore.exe",
+];
+
+pub fn is_browser(file_name_lower: &str) -> bool {
+    BROWSERS.contains(&file_name_lower)
+}
+
+/// Is it worth telling the user that `child` was started by `parent`? Yes if
+/// the child may go online and can be steered from outside (a browser, or an
+/// abusable tool that is allowed), while the parent is a program from a user
+/// folder that may not, or one the user blocked. Shells and installed tools
+/// that merely wait for a decision start browsers all day and say nothing.
+pub fn launch_worth_flagging(child: &AppInfo, parent: &AppInfo) -> bool {
+    let file = child.key.rsplit('\\').next().unwrap_or(&child.key);
+    let child_online = matches!(child.effective_out, Access::Allow | Access::Lan);
+    let child_steerable = child.category == Category::Lolbin || is_browser(file);
+    let parent_held = match parent.effective_out {
+        Access::Block => parent.category == Category::UserSpace || explicit(parent, true),
+        Access::Ask => parent.category == Category::UserSpace,
+        Access::Allow | Access::Lan => false,
+    };
+    child_online && child_steerable && parent_held
 }
 
 /// Does the rule give the app access in either direction?
@@ -322,7 +388,7 @@ mod tests {
 
     fn inputs<'a>(cat: Category, sig: &'a Signature, mode: Mode) -> Inputs<'a> {
         let protected = cat != Category::UserSpace;
-        Inputs { category: cat, signature: sig, mode, learned: &[], lan_discovery: true, protected, location: None }
+        Inputs { category: cat, signature: sig, mode, learned: &[], lan_discovery: true, protected, location: None, trusted_folder: None }
     }
 
     /// An app as the core would hold it: facts, rule, evaluated verdict.
@@ -357,6 +423,7 @@ mod tests {
             origins: Vec::new(),
             last_host: None,
             last_host_verified: false,
+            install_folder: None,
         };
         (a.effective_out, a.effective_in) = effective(&a);
         a
@@ -421,6 +488,66 @@ mod tests {
             let v = auto_verdict(&i);
             assert_eq!((v.out, v.reason), (Access::Ask, Reason::Unverified), "{mode:?}");
         }
+    }
+
+    #[test]
+    fn program_folder_of_an_installed_app() {
+        let dirs = vec![r"c:\program files".to_string(), r"c:\program files (x86)".to_string()];
+        let f = |p: &str| install_folder(p, &dirs);
+        assert_eq!(f(r"C:\Program Files\Git\usr\bin\xargs.exe").as_deref(), Some(r"C:\Program Files\Git"));
+        assert_eq!(f(r"C:\Program Files\Git\git.exe").as_deref(), Some(r"C:\Program Files\Git"));
+        assert_eq!(f(r"C:\Program Files (x86)\Steam\bin\x.exe").as_deref(), Some(r"C:\Program Files (x86)\Steam"));
+        assert_eq!(f(r"C:\Program Files\loose.exe"), None, "not the program folder itself");
+        assert_eq!(f(r"D:\Tools\foo\bin\x.exe").as_deref(), Some(r"D:\Tools\foo\bin"));
+        assert_eq!(f(r"D:\x.exe"), None, "never a whole drive");
+        assert_eq!(f(r"\\server\share\x.exe").as_deref(), Some(r"\\server\share"));
+
+        let trusted = vec![r"C:\Program Files\Git".to_string()];
+        assert_eq!(trusted_folder(r"c:\program files\git\usr\bin\xargs.exe", &trusted), Some(r"C:\Program Files\Git"));
+        assert_eq!(trusted_folder(r"c:\program files\github\x.exe", &trusted), None, "a longer name is another folder");
+        assert_eq!(trusted_folder(r"c:\program files\git", &trusted), None);
+    }
+
+    #[test]
+    fn trusted_folder_spares_the_question_in_strict_mode() {
+        let unsigned = Signature::Unsigned;
+        let mut i = inputs(Category::Installed, &unsigned, Mode::Strict);
+        assert_eq!(auto_verdict(&i).out, Access::Ask);
+        i.trusted_folder = Some(r"C:\Program Files\Git");
+        let v = auto_verdict(&i);
+        assert_eq!((v.out, v.reason), (Access::Allow, Reason::TrustedFolder(r"C:\Program Files\Git".into())));
+        // It is about installed programs only: nothing in a user folder, no abusable tool.
+        for cat in [Category::UserSpace, Category::Lolbin] {
+            let mut i = inputs(cat, &unsigned, Mode::Strict);
+            i.trusted_folder = Some(r"C:\Program Files\Git");
+            assert_eq!(auto_verdict(&i).out, Access::Ask, "{cat:?}");
+        }
+    }
+
+    #[test]
+    fn launches_through_a_browser_are_flagged() {
+        let mk = |key: &str, cat, out, rule| {
+            let mut a = app(cat, Signature::Unsigned, out, rule);
+            a.key = key.into();
+            a
+        };
+        let chrome = mk(r"c:\program files\google\chrome\application\chrome.exe", Category::Installed, Access::Allow, None);
+        let unknown = mk(r"c:\users\a\downloads\tool.exe", Category::UserSpace, Access::Ask, None);
+        assert!(launch_worth_flagging(&chrome, &unknown), "unknown download starts the browser");
+        let blocked = mk(r"c:\program files\x\x.exe", Category::Installed, Access::Allow, rule(RuleAccess::Block, RuleAccess::Auto, None));
+        assert!(launch_worth_flagging(&chrome, &blocked), "a program the user blocked");
+        // Everyday cases that must stay quiet.
+        let shell = mk(r"c:\windows\system32\cmd.exe", Category::Lolbin, Access::Ask, None);
+        assert!(!launch_worth_flagging(&chrome, &shell), "a shell waiting for a decision");
+        let explorer = mk(r"c:\windows\explorer.exe", Category::System, Access::Allow, None);
+        assert!(!launch_worth_flagging(&chrome, &explorer));
+        let notepad = mk(r"c:\windows\system32\notepad.exe", Category::System, Access::Allow, None);
+        assert!(!launch_worth_flagging(&notepad, &unknown), "not a browser or tool");
+        let held_browser = mk(r"c:\users\a\appdata\local\x\chrome.exe", Category::UserSpace, Access::Ask, None);
+        assert!(!launch_worth_flagging(&held_browser, &unknown), "the child is not allowed either");
+        // An allowed tool (relaxed mode) is as good as a browser.
+        let curl = mk(r"c:\windows\system32\curl.exe", Category::Lolbin, Access::Allow, None);
+        assert!(launch_worth_flagging(&curl, &unknown));
     }
 
     #[test]
@@ -493,6 +620,7 @@ mod tests {
                 lan_discovery: true,
                 protected: false,
                 location: Some(Location::AppData),
+                trusted_folder: None,
             };
             let v = auto_verdict(&i);
             assert_eq!((v.out, v.reason), (Access::Ask, Reason::MisplacedSystemFile), "{mode:?}");
@@ -591,6 +719,7 @@ mod tests {
             lan_discovery: true,
             protected: false,
             location: None,
+            trusted_folder: None,
         };
         assert_eq!(auto_verdict(&i).out, Access::Allow);
     }

@@ -29,6 +29,8 @@ pub fn changes(req: &Request) -> Option<Vec<&Request>> {
                 | Request::SetNetworkTrust { .. }
                 | Request::SetOptions { .. }
                 | Request::RemovePublisher(_)
+                | Request::TrustFolder { .. }
+                | Request::UntrustFolder(_)
                 | Request::EnrollHello { .. }
                 | Request::RemoveHello { .. }
         )
@@ -65,6 +67,13 @@ impl Names {
     /// from the file itself and says whatever its author wants it to say.
     fn app(&self, key: &str) -> String {
         clean(self.apps.iter().find(|a| a.key == key).map_or(key, |a| a.path.as_str()))
+    }
+
+    /// The program folder the app belongs to (its path if the service does
+    /// not name one – the request will then be turned down anyway).
+    fn folder(&self, key: &str) -> String {
+        let app = self.apps.iter().find(|a| a.key == key);
+        clean(app.and_then(|a| a.install_folder.as_deref()).or(app.map(|a| a.path.as_str())).unwrap_or(key))
     }
 
     fn network(&self, id: &str) -> String {
@@ -150,6 +159,18 @@ pub fn describe(req: &Request, names: &Names) -> Vec<String> {
             v
         }
         Request::RemovePublisher(p) => vec![format!("{} {}", t("Herausgeber nicht mehr vertrauen:", "Stop trusting publisher:"), clean(p))],
+        Request::TrustFolder { key } => vec![format!(
+            "{} {} – {}",
+            t("Programmordner vertrauen:", "Trust program folder:"),
+            names.folder(key),
+            t(
+                "alle dort installierten Programme dürfen ins Internet, auch ohne Signatur",
+                "every program installed there may go online, signed or not"
+            )
+        )],
+        Request::UntrustFolder(folder) => {
+            vec![format!("{} {}", t("Programmordner nicht mehr vertrauen:", "Stop trusting program folder:"), clean(folder))]
+        }
         Request::EnrollHello { name, sid, .. } => vec![format!(
             "{} {} ({}) – {}",
             t("Windows Hello einrichten für Konto", "Set up Windows Hello for account"),
@@ -248,6 +269,8 @@ mod tests {
             Request::SetNetworkTrust { id: "{id}".into(), trusted: Some(true) },
             Request::SetOptions { lan_discovery: Some(true), learn_publishers: None },
             Request::RemovePublisher("P".into()),
+            Request::TrustFolder { key: "k".into() },
+            Request::UntrustFolder("C:\\Program Files\\X".into()),
             enroll,
             Request::RemoveHello { sid: "S-1-5-21-1".into() },
         ];

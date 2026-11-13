@@ -31,7 +31,7 @@ use briqwall_common::{NetCategory, NetworkInfo};
 /// read. A full snapshot of all processes (names, parents, thread counts)
 /// costs over two hundred times as much and is taken only when a new
 /// process cannot be opened to ask it directly.
-pub fn spawn_process_watcher(tx: Sender<String>) {
+pub fn spawn_process_watcher(tx: Sender<(String, u32)>) {
     std::thread::Builder::new()
         .name("procwatch".into())
         .spawn(move || {
@@ -53,7 +53,7 @@ pub fn spawn_process_watcher(tx: Sender<String>) {
                             .cloned()
                     });
                     if let Some(path) = process_path(*pid) {
-                        if tx.send(path).is_err() {
+                        if tx.send((path, *pid)).is_err() {
                             return;
                         }
                     }

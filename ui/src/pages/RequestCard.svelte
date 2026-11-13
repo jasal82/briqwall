@@ -39,11 +39,20 @@
   const block = () => decide("Block", null, t("toast.blocked", { name: app.name }));
   const later = () => store.act({ Snooze: { key: app.key } }, t("toast.snoozed", { name: app.name }));
 
+  // An unsigned tool of an installed product ("Strict" asks for each one):
+  // offer to settle the whole program folder with one decision.
+  const folder = $derived(app.reason === "InstalledUnsignedStrict" ? (app.install_folder ?? null) : null);
+  const folderName = $derived(folder?.split(String.fromCharCode(92)).pop() ?? "");
+  const trustFolder = () => store.act({ TrustFolder: { key: app.key } }, t("toast.folderTrusted", { folder: folderName }));
+
   const items = $derived({
     always: { label: t("req.always"), hint: t("req.always.hint"), run: allowAlways },
     hour: { label: t("req.hour"), hint: t("req.hour.hint"), run: allowHour },
     lan: { label: t("req.lan"), hint: lanTarget ? t("req.lan.hintTarget") : t("req.lan.hint"), run: allowLan },
   });
+  const wholeFolder = $derived(
+    folder ? [{ label: t("req.folder", { folder: folderName }), hint: `${t("req.folder.hint")} (${folder})`, run: trustFolder }] : [],
+  );
 </script>
 
 <article class="card req" class:risk-high={risky} class:selected>
@@ -103,10 +112,10 @@
       <SplitButton label={t("req.allowHour")} primary run={allowHour} items={[items.always, items.lan]} />
       <button class="btn danger" onclick={block}>{t("common.block")}</button>
     {:else if lanTarget}
-      <SplitButton label={t("req.allowLan")} primary run={allowLan} items={[items.always, items.hour]} />
+      <SplitButton label={t("req.allowLan")} primary run={allowLan} items={[items.always, items.hour, ...wholeFolder]} />
       <button class="btn danger" onclick={block}>{t("common.block")}</button>
     {:else}
-      <SplitButton label={t("common.allow")} primary run={allowAlways} items={[items.hour, items.lan]} />
+      <SplitButton label={t("common.allow")} primary run={allowAlways} items={[items.hour, items.lan, ...wholeFolder]} />
       <button class="btn danger" onclick={block}>{t("common.block")}</button>
     {/if}
     <span class="sp"></span>

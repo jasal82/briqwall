@@ -19,7 +19,8 @@ use briqwall_common::*;
 pub enum Msg {
     /// A program started. `facts`: already gathered by a worker where the
     /// program is new or its file changed (see [`crate::evaluator`]).
-    Process { path: String, facts: Option<trust::Facts> },
+    /// `pid`: the process, if this is about one that just started.
+    Process { path: String, facts: Option<trust::Facts>, pid: Option<u32> },
     Net(NetEvt),
     /// Process details of a blocked attempt (from Security audit event 5157).
     Origin { filter_id: u64, path: Option<String>, origin: ProcessOrigin },
@@ -32,6 +33,14 @@ const MAX_EVENTS: usize = 1000;
 const SNOOZE_SECS: u64 = 24 * 3600;
 const PRUNE_AFTER_SECS: u64 = 90 * 24 * 3600;
 const CHALLENGE_TTL: Duration = Duration::from_secs(120);
+
+/// On whose word the request being handled may loosen protection.
+enum Acting {
+    /// A client running with administrator rights (its account SID).
+    Admin(Option<String>),
+    /// The account whose Windows Hello key signed the changes.
+    Hello(String),
+}
 
 pub struct Core {
     dir: PathBuf,
@@ -59,6 +68,14 @@ pub struct Core {
     /// The filters of a previous run have been removed; from then on this
     /// process knows every Briqwall filter by id.
     purged: bool,
+    /// The activity log changed since it was last written.
+    events_dirty: bool,
+    /// Windows' program folders (lower-case), see [`policy::install_folder`].
+    program_dirs: Vec<String>,
+    /// Set while a request is handled that came with a confirmation.
+    acting: Option<Acting>,
+    /// Keeps "started by a blocked program" from repeating all day.
+    launches: Coalescer,
     blocked_session: u64,
     coalescer: Coalescer,
     started: u64,
@@ -80,7 +97,19 @@ pub struct Core {
 
 impl Core {
     pub fn new(dir: PathBuf, engine: Result<Engine, String>, known: KnownFiles) -> Self {
+        Self::new_with(dir, engine, known, true)
+    }
+
+    /// `scan_running`: evaluate the programs that are already running
+    /// (always, except in tests that want an empty app list).
+    fn new_with(dir: PathBuf, engine: Result<Engine, String>, known: KnownFiles, scan_running: bool) -> Self {
         let mut state = store::load(&dir);
+        // The activity log continues where the last run stopped.
+        let mut events: VecDeque<Event> = store::load_events(&dir).into();
+        while events.len() > MAX_EVENTS {
+            events.pop_front();
+        }
+        let seq = events.back().map_or(0, |e| e.seq);
         let now = now_secs();
         state.apps.retain(|_, a| a.rule.is_some() || now.saturating_sub(a.last_seen) < PRUNE_AFTER_SECS);
         // Names taken from files nobody vouches for (see `trust::gather`) may
@@ -106,8 +135,8 @@ impl Core {
             app_filter_ids: HashMap::new(),
             purposes: HashMap::new(),
             app_id_cache: HashMap::new(),
-            events: VecDeque::new(),
-            seq: 0,
+            events,
+            seq,
             networks: Vec::new(),
             network_trusted: false,
             devmap,
@@ -118,6 +147,10 @@ impl Core {
             last_save: Instant::now(),
             known,
             purged: false,
+            events_dirty: false,
+            program_dirs: trust::program_dirs(),
+            acting: None,
+            launches: Coalescer::default(),
             blocked_session: 0,
             coalescer: Coalescer::default(),
             started: now,
@@ -137,8 +170,11 @@ impl Core {
         for (key, app) in &core.state.apps {
             core.known.set(key, app.file_stamp);
         }
-        let running: std::collections::BTreeSet<String> =
-            watchers::list_pids().into_iter().filter_map(watchers::process_path).collect();
+        let running: std::collections::BTreeSet<String> = if scan_running {
+            watchers::list_pids().into_iter().filter_map(watchers::process_path).collect()
+        } else {
+            Default::default()
+        };
         let running: Vec<String> = running.into_iter().collect();
         // What is new, or changed since the last run, is checked on several
         // threads at once: on a first start that is every running program.
@@ -208,8 +244,11 @@ impl Core {
 
     fn handle(&mut self, msg: Msg) {
         match msg {
-            Msg::Process { path, facts } => {
-                self.observe_inner(&path, true, facts);
+            Msg::Process { path, facts, pid } => {
+                let key = self.observe_inner(&path, true, facts);
+                if let Some(pid) = pid {
+                    self.flag_launch(pid, &key);
+                }
             }
             Msg::Net(evt) => self.on_net_event(evt),
             Msg::Origin { filter_id, path, origin } => self.on_origin(filter_id, path, origin),
@@ -217,7 +256,12 @@ impl Core {
                 let resp = match req {
                     // The one answer that depends on who is asking.
                     Request::Apps => self.apps_for(privileged, caller_sid.as_deref()),
-                    req => self.on_request(req, privileged),
+                    req => {
+                        self.acting = privileged.then(|| Acting::Admin(caller_sid));
+                        let resp = self.on_request(req, privileged);
+                        self.acting = None;
+                        resp
+                    }
                 };
                 let _ = reply.send(resp);
             }
@@ -269,6 +313,12 @@ impl Core {
         if let Err(e) = store::save(&self.dir, &self.state) {
             log::error!("Speichern fehlgeschlagen: {e:#}");
         }
+        if self.events_dirty {
+            if let Err(e) = store::save_events(&self.dir, self.events.iter()) {
+                log::error!("Aktivitätsprotokoll konnte nicht gespeichert werden: {e:#}");
+            }
+            self.events_dirty = false;
+        }
         self.dirty = false;
         self.stats_dirty = false;
         self.last_save = Instant::now();
@@ -279,6 +329,45 @@ impl Core {
         self.events.push_back(Event { seq: self.seq, time: now_secs(), kind });
         while self.events.len() > MAX_EVENTS {
             self.events.pop_front();
+        }
+        // Written along with the next save: at once if something to keep
+        // changed as well, otherwise with the statistics.
+        self.events_dirty = true;
+        self.stats_dirty = true;
+    }
+
+    /// Who confirmed the request being handled, for the activity log.
+    fn approval(&self) -> Option<Approval> {
+        Some(match self.acting.as_ref()? {
+            Acting::Hello(account) => Approval { account: account.clone(), method: ApprovalMethod::Hello },
+            Acting::Admin(sid) => Approval {
+                account: sid.as_deref().and_then(trust::account_name).unwrap_or_default(),
+                method: ApprovalMethod::Admin,
+            },
+        })
+    }
+
+    /// A program that may go online was started. If it is a browser or an
+    /// abusable tool and one of its ancestors is a program that may *not* go
+    /// online, say so: the browser will fetch whatever it is told to.
+    fn flag_launch(&mut self, pid: u32, key: &str) {
+        let Some(child) = self.state.apps.get(key) else { return };
+        let file = key.rsplit('\\').next().unwrap_or(key);
+        let candidate = matches!(child.effective_out, Access::Allow | Access::Lan)
+            && (child.category == Category::Lolbin || policy::is_browser(file));
+        if !candidate {
+            return; // the common case, decided without looking at the process
+        }
+        let Some(origin) = crate::procinfo::origin(pid, Some(key)) else { return };
+        let found = origin.parents.iter().find_map(|p| {
+            let parent = self.state.apps.get(&p.path.as_ref()?.to_lowercase())?;
+            policy::launch_worth_flagging(child, parent).then(|| (parent.key.clone(), parent.name.clone()))
+        });
+        let Some((by_key, by_name)) = found else { return };
+        if self.launches.should_log(&format!("{by_key}>{key}"), Duration::from_secs(3600)) {
+            let (key, name) = (key.to_string(), child.name.clone());
+            log::info!("{name} wurde von {by_name} gestartet, das selbst nicht ins Netz darf");
+            self.push(EventKind::StartedByBlocked { key, name, by_key, by_name });
         }
     }
 
@@ -313,7 +402,12 @@ impl Core {
             lan_discovery: s.lan_discovery,
             protected: app.protected,
             location: app.location_hint,
+            trusted_folder: (app.category == Category::Installed)
+                .then(|| policy::trusted_folder(&app.path, &s.trusted_folders))
+                .flatten(),
         });
+        app.install_folder =
+            (app.category == Category::Installed).then(|| policy::install_folder(&app.path, &self.program_dirs)).flatten();
         app.auto_out = v.out;
         app.auto_in = v.inn;
         app.reason = v.reason;
@@ -411,6 +505,7 @@ impl Core {
             origins: Vec::new(),
             last_host: None,
             last_host_verified: false,
+            install_folder: None,
         };
         self.evaluate(&mut app);
         log::debug!("Neue App {} → {:?} ({:?})", app.path, app.effective_out, app.reason);
@@ -460,6 +555,7 @@ impl Core {
             origins: Vec::new(),
             last_host: None,
             last_host_verified: false,
+            install_folder: None,
         };
         self.evaluate(&mut app);
         self.state.apps.insert(key.clone(), app);
@@ -669,6 +765,9 @@ impl Core {
             DirPolicy { access: app.effective_in, explicit: policy::explicit(app, false) },
             self.state.settings.mode,
             self.network_trusted,
+            // Follow Windows' own view of the network – unless the user told
+            // Briqwall to trust a network that Windows has down as public.
+            !self.networks.iter().any(|n| n.explicit && n.trusted && n.windows_category == NetCategory::Public),
         )
     }
 
@@ -929,7 +1028,8 @@ impl Core {
                 }
                 self.state.settings.mode = m;
                 log::info!("Modus {cur:?} → {m:?}");
-                self.push(EventKind::ModeChanged { from: cur, to: m });
+                let by = if m.strictness() < cur.strictness() { self.approval() } else { None };
+                self.push(EventKind::ModeChanged { from: cur, to: m, by });
                 self.reevaluate_all();
                 self.rebuild();
                 Response::Ok
@@ -1004,6 +1104,38 @@ impl Core {
                 self.rebuild();
                 Response::Ok
             }
+            Request::TrustFolder { key } => {
+                // Checked first: an unconfirmed client learns nothing about the app.
+                if !privileged {
+                    return Response::Denied;
+                }
+                let Some(app) = self.state.apps.get(&key) else { return Response::Error(ErrorCode::UnknownApp) };
+                // Only where the folder is the administrators' (an installed
+                // app); elsewhere "everything in this folder" is whatever
+                // anyone drops there.
+                let Some(folder) = app.install_folder.clone().filter(|_| app.category == Category::Installed) else {
+                    return Response::Error(ErrorCode::BadRequest("no program folder".into()));
+                };
+                if !self.state.settings.trusted_folders.iter().any(|f| f.eq_ignore_ascii_case(&folder)) {
+                    log::info!("Programmordner vertraut: {folder}");
+                    self.state.settings.trusted_folders.push(folder.clone());
+                    let by = self.approval();
+                    self.push(EventKind::FolderTrusted { folder, by });
+                    self.reevaluate_all();
+                    self.rebuild();
+                }
+                Response::Ok
+            }
+            Request::UntrustFolder(folder) => {
+                let before = self.state.settings.trusted_folders.len();
+                self.state.settings.trusted_folders.retain(|f| !f.eq_ignore_ascii_case(&folder));
+                if self.state.settings.trusted_folders.len() != before {
+                    self.push(EventKind::FolderUntrusted { folder });
+                    self.reevaluate_all();
+                    self.rebuild();
+                }
+                Response::Ok
+            }
             Request::Batch(reqs) => self.run_all(reqs, privileged),
             Request::Challenge => {
                 self.challenges.retain(|_, t| t.elapsed() < CHALLENGE_TTL);
@@ -1031,6 +1163,7 @@ impl Core {
                     log::warn!("Ungültige Windows-Hello-Signatur abgewiesen");
                     return Response::Denied;
                 };
+                let account = signer.name.clone();
                 let signer = if signer.name.is_empty() { "unbekanntes Konto".to_string() } else { signer.name.clone() };
                 let reqs: Vec<Request> = match serde_json::from_str(&payload) {
                     Ok(r) => r,
@@ -1047,7 +1180,10 @@ impl Core {
                     return Response::Error(ErrorCode::NotApprovableWithHello);
                 }
                 log::info!("{} Änderung(en) per Windows Hello bestätigt ({signer})", reqs.len());
-                self.run_all(reqs, true)
+                let before = self.acting.replace(Acting::Hello(account));
+                let resp = self.run_all(reqs, true);
+                self.acting = before;
+                resp
             }
             Request::EnrollHello { public_key, sid, name } => {
                 if !privileged {
@@ -1116,9 +1252,12 @@ impl Core {
         cand.tampered = false; // a fresh decision supersedes a tamper warning
         self.evaluate(&mut cand);
 
-        if policy::loosens(&current, &cand) && !privileged {
+        let loosens = policy::loosens(&current, &cand);
+        if loosens && !privileged {
             return Response::Denied;
         }
+        // Tightening needs nobody's word; only a loosening has a confirmer.
+        let by = if loosens { self.approval() } else { None };
 
         let grants = policy::grants(cand.rule.as_ref());
         // Which binary the permission is for is only (re)recorded together
@@ -1143,7 +1282,7 @@ impl Core {
         let name = cand.name.clone();
         let rule = cand.rule.clone();
         self.state.apps.insert(key.to_string(), cand);
-        self.push(EventKind::RuleChanged { key: key.to_string(), name, rule });
+        self.push(EventKind::RuleChanged { key: key.to_string(), name, rule, by });
 
         match publisher {
             Some(p) if learn && !policy::is_learned_publisher(&p, &self.state.settings.learned_publishers) => {
@@ -1242,6 +1381,296 @@ fn strip_verbatim(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -------------------------------------------------------------------
+    // What a client may do. The promise is: anyone may tighten protection,
+    // loosening it takes a confirmation – an elevated client or a Windows
+    // Hello signature. These tests drive the core the way the pipe does.
+    // -------------------------------------------------------------------
+
+    /// A core without WFP and without the programs running on this machine,
+    /// in a folder of its own.
+    fn test_core(name: &str) -> (Core, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("briqwall-core-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        (Core::new_with(dir.clone(), Err("test".into()), KnownFiles::default(), false), dir)
+    }
+
+    /// Send a request as the pipe server would.
+    fn ask(core: &mut Core, req: Request, privileged: bool) -> Response {
+        let (tx, rx) = std::sync::mpsc::channel();
+        // SYSTEM has a name on every Windows, in every language.
+        core.handle(Msg::Ipc { req, privileged, caller_sid: Some("S-1-5-18".into()), reply: tx });
+        rx.recv().unwrap()
+    }
+
+    /// Make an app known without touching a file.
+    fn add_app(core: &mut Core, path: &str, category: Category, signature: Signature) -> String {
+        let facts = trust::Facts {
+            exists: true,
+            name: "Test".into(),
+            signature,
+            protected: category != Category::UserSpace,
+            category,
+            location_hint: None,
+            stamp: Some((1, 1)),
+        };
+        core.observe_inner(path, false, Some(facts))
+    }
+
+    fn rule(outbound: RuleAccess, expires: Option<u64>) -> Option<UserRule> {
+        Some(UserRule { outbound, inbound: RuleAccess::Auto, expires, created: 1 })
+    }
+
+    fn out_of(core: &Core, key: &str) -> Access {
+        core.state.apps[key].effective_out
+    }
+
+    #[test]
+    fn unconfirmed_clients_can_only_tighten() {
+        let (mut core, dir) = test_core("tighten");
+        let key = add_app(&mut core, r"c:\users\t\downloads\tool.exe", Category::UserSpace, Signature::Unsigned);
+        assert_eq!(out_of(&core, &key), Access::Ask);
+        let denied = |r: Response| matches!(r, Response::Denied);
+        let ok = |r: Response| matches!(r, Response::Ok);
+
+        // Rules: no permission of any kind, but a block at once.
+        for access in [RuleAccess::Allow, RuleAccess::Lan] {
+            assert!(denied(ask(&mut core, Request::SetRule { key: key.clone(), rule: rule(access, None) }, false)));
+            assert!(denied(ask(&mut core, Request::SetRule { key: key.clone(), rule: rule(access, Some(now_secs() + 60)) }, false)));
+        }
+        assert_eq!(out_of(&core, &key), Access::Ask, "a denied request changes nothing");
+        assert!(ok(ask(&mut core, Request::SetRule { key: key.clone(), rule: rule(RuleAccess::Block, None) }, false)));
+        assert_eq!(out_of(&core, &key), Access::Block);
+        // Hiding a request is no permission either way.
+        assert!(ok(ask(&mut core, Request::Snooze { key: key.clone() }, false)));
+        // Forgetting an app would drop its block with it.
+        assert!(denied(ask(&mut core, Request::Forget { key: key.clone() }, false)));
+        assert!(core.state.apps.contains_key(&key));
+
+        // Protection level: up yes, down no.
+        assert!(ok(ask(&mut core, Request::SetMode(Mode::Strict), false)));
+        for lower in [Mode::Balanced, Mode::Relaxed, Mode::Off] {
+            assert!(denied(ask(&mut core, Request::SetMode(lower), false)), "{lower:?}");
+        }
+        assert!(ok(ask(&mut core, Request::SetMode(Mode::Lockdown), false)));
+        assert!(denied(ask(&mut core, Request::SetMode(Mode::Strict), false)), "leaving lockdown is loosening");
+        assert_eq!(core.state.settings.mode, Mode::Lockdown);
+
+        // Settings that open something.
+        assert!(denied(ask(&mut core, Request::SetOptions { lan_discovery: Some(true), learn_publishers: None }, false)));
+        assert!(denied(ask(&mut core, Request::SetOptions { lan_discovery: None, learn_publishers: Some(true) }, false)));
+        assert!(ok(ask(&mut core, Request::SetOptions { lan_discovery: Some(false), learn_publishers: Some(false) }, false)));
+        assert!(denied(ask(&mut core, Request::SetNetworkTrust { id: "net".into(), trusted: Some(true) }, false)));
+        assert!(ok(ask(&mut core, Request::SetNetworkTrust { id: "net".into(), trusted: Some(false) }, false)));
+        // A key of one's own would be a standing permission to confirm.
+        let enroll = Request::EnrollHello { public_key: "00".into(), sid: "S-1-5-21-1".into(), name: "x".into() };
+        assert!(denied(ask(&mut core, enroll, false)));
+        assert!(core.state.hello_keys.is_empty());
+        assert!(denied(ask(&mut core, Request::TrustFolder { key: key.clone() }, false)));
+        assert!(denied(ask(&mut core, Request::TrustFolder { key: "no such app".into() }, false)), "no hint whether the app exists");
+        // Taking trust away is always possible.
+        assert!(ok(ask(&mut core, Request::RemovePublisher("Someone".into()), false)));
+        assert!(ok(ask(&mut core, Request::UntrustFolder(r"C:\Program Files\X".into()), false)));
+        assert!(ok(ask(&mut core, Request::RemoveHello { sid: "S-1-5-21-1".into() }, false)));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_batch_stops_at_the_first_change_that_needs_confirmation() {
+        let (mut core, dir) = test_core("batch");
+        let a = add_app(&mut core, r"c:\users\t\downloads\a.exe", Category::UserSpace, Signature::Unsigned);
+        let b = add_app(&mut core, r"c:\users\t\downloads\b.exe", Category::UserSpace, Signature::Unsigned);
+        let batch = Request::Batch(vec![
+            Request::SetRule { key: a.clone(), rule: rule(RuleAccess::Block, None) },
+            Request::SetRule { key: b.clone(), rule: rule(RuleAccess::Allow, None) },
+            Request::SetMode(Mode::Strict),
+        ]);
+        assert!(matches!(ask(&mut core, batch.clone(), false), Response::Denied));
+        assert_eq!(out_of(&core, &b), Access::Ask);
+        assert_eq!(core.state.settings.mode, Mode::Balanced, "nothing after the denied change is applied");
+        // Confirmed, all of it goes through.
+        assert!(matches!(ask(&mut core, batch, true), Response::Ok));
+        assert_eq!((out_of(&core, &a), out_of(&core, &b)), (Access::Block, Access::Allow));
+        assert_eq!(core.state.settings.mode, Mode::Strict);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_confirmed_permission_cannot_be_stretched_without_another_confirmation() {
+        let (mut core, dir) = test_core("stretch");
+        let key = add_app(&mut core, r"c:\users\t\downloads\tool.exe", Category::UserSpace, Signature::Unsigned);
+        let hour = now_secs() + 3600;
+        assert!(matches!(ask(&mut core, Request::SetRule { key: key.clone(), rule: rule(RuleAccess::Allow, Some(hour)) }, true), Response::Ok));
+        assert_eq!(out_of(&core, &key), Access::Allow);
+        let identity = core.state.apps[&key].identity.clone();
+
+        for longer in [None, Some(hour + 1)] {
+            let r = ask(&mut core, Request::SetRule { key: key.clone(), rule: rule(RuleAccess::Allow, longer) }, false);
+            assert!(matches!(r, Response::Denied), "{longer:?}");
+        }
+        // Sending the same rule again is accepted, but is no new decision.
+        assert!(matches!(ask(&mut core, Request::SetRule { key: key.clone(), rule: rule(RuleAccess::Allow, Some(hour)) }, false), Response::Ok));
+        assert_eq!(core.state.apps[&key].identity, identity, "which file is meant is not re-recorded");
+        assert!(core.state.settings.learned_publishers.is_empty());
+
+        // The permission ends by itself.
+        core.state.apps.get_mut(&key).unwrap().rule.as_mut().unwrap().expires = Some(now_secs() - 1);
+        core.tick();
+        assert_eq!(out_of(&core, &key), Access::Ask);
+        assert!(core.state.apps[&key].rule.is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_log_says_who_confirmed_a_loosening() {
+        let (mut core, dir) = test_core("who");
+        let key = add_app(&mut core, r"c:\users\t\downloads\tool.exe", Category::UserSpace, Signature::Unsigned);
+        let last_rule_change = |core: &Core| {
+            core.events.iter().rev().find_map(|e| match &e.kind {
+                EventKind::RuleChanged { by, .. } => Some(by.clone()),
+                _ => None,
+            })
+        };
+        ask(&mut core, Request::SetRule { key: key.clone(), rule: rule(RuleAccess::Allow, None) }, true);
+        let by = last_rule_change(&core).unwrap().expect("a loosening has a confirmer");
+        assert_eq!(by.method, ApprovalMethod::Admin);
+        assert!(!by.account.is_empty(), "the account of the elevated client");
+        // Tightening needs nobody, whoever does it.
+        ask(&mut core, Request::SetRule { key: key.clone(), rule: rule(RuleAccess::Block, None) }, true);
+        assert_eq!(last_rule_change(&core), Some(None));
+        ask(&mut core, Request::SetRule { key: key.clone(), rule: None }, false);
+        assert_eq!(last_rule_change(&core), Some(None));
+
+        ask(&mut core, Request::SetMode(Mode::Strict), false);
+        ask(&mut core, Request::SetMode(Mode::Relaxed), true);
+        let modes: Vec<Option<ApprovalMethod>> = core
+            .events
+            .iter()
+            .filter_map(|e| if let EventKind::ModeChanged { by, .. } = &e.kind { Some(by.as_ref().map(|b| b.method)) } else { None })
+            .collect();
+        assert_eq!(modes, vec![None, Some(ApprovalMethod::Admin)]);
+        assert!(core.acting.is_none(), "nothing carries over to the next request");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_hello_signature_confirms_exactly_what_was_signed_once() {
+        use rsa::pkcs1v15::SigningKey;
+        use rsa::pkcs8::EncodePublicKey;
+        use rsa::signature::{SignatureEncoding, Signer};
+        use sha2::Sha256;
+        let (mut core, dir) = test_core("hello");
+        let key = add_app(&mut core, r"c:\users\t\downloads\tool.exe", Category::UserSpace, Signature::Unsigned);
+        let private = rsa::RsaPrivateKey::new(&mut rand::thread_rng(), 2048).unwrap();
+        let spki = briqwall_common::util::hex(private.to_public_key().to_public_key_der().unwrap().as_bytes());
+        let sign = |nonce: &str, payload: &str| {
+            briqwall_common::util::hex(&SigningKey::<Sha256>::new(private.clone()).sign(&approval_message(nonce, payload)).to_bytes())
+        };
+        let challenge = |core: &mut Core| match ask(core, Request::Challenge, false) {
+            Response::Challenge(n) => n,
+            other => panic!("{other:?}"),
+        };
+        let allow = serde_json::to_string(&vec![Request::SetRule { key: key.clone(), rule: rule(RuleAccess::Allow, None) }]).unwrap();
+        let approved = |nonce: &str, payload: &str, signature: String| Request::Approved {
+            nonce: nonce.into(),
+            payload: payload.into(),
+            signature,
+        };
+
+        // No key registered: nothing to check a signature against.
+        let n = challenge(&mut core);
+        let r = ask(&mut core, approved(&n, &allow, sign(&n, &allow)), false);
+        assert!(matches!(r, Response::Error(ErrorCode::HelloNotEnrolled)));
+
+        core.state.hello_keys.push(store::HelloKey { sid: "S-1-5-21-1".into(), name: "Kim".into(), key: spki });
+
+        // A signature over something else does not confirm this.
+        let n = challenge(&mut core);
+        let off = serde_json::to_string(&vec![Request::SetMode(Mode::Off)]).unwrap();
+        assert!(matches!(ask(&mut core, approved(&n, &off, sign(&n, &allow)), false), Response::Denied));
+        // The nonce is used up even by a failed attempt.
+        assert!(matches!(ask(&mut core, approved(&n, &allow, sign(&n, &allow)), false), Response::Error(ErrorCode::ApprovalExpired)));
+        // A nonce the service never issued.
+        assert!(matches!(ask(&mut core, approved("abcd", &allow, sign("abcd", &allow)), false), Response::Error(ErrorCode::ApprovalExpired)));
+        assert_eq!(out_of(&core, &key), Access::Ask);
+        assert_eq!(core.state.settings.mode, Mode::Balanced);
+
+        // Hello cannot register further keys or wrap other requests.
+        let n = challenge(&mut core);
+        let enroll = serde_json::to_string(&vec![Request::EnrollHello { public_key: "00".into(), sid: "s".into(), name: "n".into() }]).unwrap();
+        let r = ask(&mut core, approved(&n, &enroll, sign(&n, &enroll)), false);
+        assert!(matches!(r, Response::Error(ErrorCode::NotApprovableWithHello)));
+        assert_eq!(core.state.hello_keys.len(), 1);
+
+        // The real thing: applied once, with the signer on record.
+        let n = challenge(&mut core);
+        assert!(matches!(ask(&mut core, approved(&n, &allow, sign(&n, &allow)), false), Response::Ok));
+        assert_eq!(out_of(&core, &key), Access::Allow);
+        let by = core.events.iter().rev().find_map(|e| match &e.kind {
+            EventKind::RuleChanged { by, .. } => by.clone(),
+            _ => None,
+        });
+        assert_eq!(by, Some(Approval { account: "Kim".into(), method: ApprovalMethod::Hello }));
+        // Replaying it does nothing.
+        ask(&mut core, Request::SetRule { key: key.clone(), rule: None }, false);
+        assert!(matches!(ask(&mut core, approved(&n, &allow, sign(&n, &allow)), false), Response::Error(ErrorCode::ApprovalExpired)));
+        assert_eq!(out_of(&core, &key), Access::Ask);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_trusted_program_folder_covers_its_unsigned_tools_in_strict_mode() {
+        let (mut core, dir) = test_core("folder");
+        core.program_dirs = vec![r"c:\program files".into()];
+        ask(&mut core, Request::SetMode(Mode::Strict), false);
+        let xargs = add_app(&mut core, r"C:\Program Files\Git\usr\bin\xargs.exe", Category::Installed, Signature::Unsigned);
+        let sed = add_app(&mut core, r"C:\Program Files\Git\usr\bin\sed.exe", Category::Installed, Signature::Unsigned);
+        let other = add_app(&mut core, r"C:\Program Files\Other\tool.exe", Category::Installed, Signature::Unsigned);
+        let download = add_app(&mut core, r"c:\users\t\downloads\tool.exe", Category::UserSpace, Signature::Unsigned);
+        assert_eq!(core.state.apps[&xargs].install_folder.as_deref(), Some(r"C:\Program Files\Git"));
+        assert_eq!(core.state.apps[&download].install_folder, None);
+        assert_eq!(out_of(&core, &xargs), Access::Ask);
+
+        // Not for programs in user folders: "the folder" is whatever lands there.
+        assert!(matches!(ask(&mut core, Request::TrustFolder { key: download.clone() }, true), Response::Error(ErrorCode::BadRequest(_))));
+
+        assert!(matches!(ask(&mut core, Request::TrustFolder { key: xargs.clone() }, true), Response::Ok));
+        assert_eq!(core.state.settings.trusted_folders, vec![r"C:\Program Files\Git".to_string()]);
+        assert_eq!((out_of(&core, &xargs), out_of(&core, &sed)), (Access::Allow, Access::Allow));
+        assert_eq!(core.state.apps[&sed].reason, Reason::TrustedFolder(r"C:\Program Files\Git".into()));
+        assert_eq!(out_of(&core, &other), Access::Ask, "another product still asks");
+        // Trusting it twice changes nothing.
+        ask(&mut core, Request::TrustFolder { key: sed.clone() }, true);
+        assert_eq!(core.state.settings.trusted_folders.len(), 1);
+        let trusted_by = core.events.iter().find_map(|e| if let EventKind::FolderTrusted { by, .. } = &e.kind { by.clone() } else { None });
+        assert_eq!(trusted_by.map(|b| b.method), Some(ApprovalMethod::Admin));
+
+        // Anyone may take the trust away again.
+        assert!(matches!(ask(&mut core, Request::UntrustFolder(r"c:\program files\git".into()), false), Response::Ok));
+        assert_eq!(out_of(&core, &xargs), Access::Ask);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_activity_log_continues_after_a_restart() {
+        let (mut core, dir) = test_core("log");
+        let key = add_app(&mut core, r"c:\users\t\downloads\tool.exe", Category::UserSpace, Signature::Unsigned);
+        ask(&mut core, Request::SetRule { key, rule: rule(RuleAccess::Block, None) }, false);
+        let before: Vec<u64> = core.events.iter().map(|e| e.seq).collect();
+        assert!(before.len() >= 2, "service start and the rule change");
+        core.save();
+        drop(core);
+
+        let core = Core::new_with(dir.clone(), Err("test".into()), KnownFiles::default(), false);
+        let after: Vec<u64> = core.events.iter().map(|e| e.seq).collect();
+        assert_eq!(&after[..before.len()], &before[..], "what happened before is still there");
+        assert!(after.len() > before.len(), "plus the new start (and the network it found)");
+        assert!(after.windows(2).all(|w| w[0] < w[1]), "numbers go on, none is used twice");
+        assert!(matches!(core.events.back().unwrap().kind, EventKind::Started { .. }));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn strips_canonicalize_prefixes() {

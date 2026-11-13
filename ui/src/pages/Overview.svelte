@@ -67,6 +67,17 @@
         </div>
       </div>
 
+      {#if s.privileged}
+        <!-- Loosening needs a confirmation – unless everything runs elevated anyway. -->
+        <div class="callout">
+          <span class="ic"><Icon name="alert" size={20} /></span>
+          <div class="t">
+            <b>{t("warn.elevated.title")}</b>
+            <span class="muted">{store.prefs.uac_enabled ? t("warn.elevated.asAdmin") : t("warn.elevated.uacOff")}</span>
+          </div>
+        </div>
+      {/if}
+
       {#if s.pending > 0 && s.mode !== "Lockdown"}
         <div class="callout">
           <span class="ic"><Icon name="bell" size={20} /></span>

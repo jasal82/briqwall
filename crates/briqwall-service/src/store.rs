@@ -257,15 +257,53 @@ pub fn load(dir: &Path) -> State {
 
 /// Atomic save (write temp file, then rename).
 pub fn save(dir: &Path, state: &State) -> Result<()> {
-    let tmp = dir.join("state.json.tmp");
-    let data = serde_json::to_vec_pretty(state)?;
+    write_atomic(dir, "state.json", &serde_json::to_vec_pretty(state)?)
+}
+
+fn write_atomic(dir: &Path, name: &str, data: &[u8]) -> Result<()> {
+    let tmp = dir.join(format!("{name}.tmp"));
     {
         let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(&data)?;
+        f.write_all(data)?;
         f.sync_all()?;
     }
-    std::fs::rename(&tmp, dir.join("state.json"))?;
+    std::fs::rename(&tmp, dir.join(name))?;
     Ok(())
+}
+
+/// How long the activity log is kept across restarts.
+const EVENTS_KEEP_SECS: u64 = 30 * 24 * 3600;
+
+/// The activity log of earlier runs. Missing or unreadable: an empty log.
+pub fn load_events(dir: &Path) -> Vec<briqwall_common::Event> {
+    let Ok(bytes) = std::fs::read(dir.join("events.json")) else { return Vec::new() };
+    let mut events: Vec<briqwall_common::Event> = match serde_json::from_slice(&bytes) {
+        Ok(e) => e,
+        Err(e) => {
+            log::warn!("events.json unlesbar ({e}); Aktivitätsprotokoll beginnt neu");
+            return Vec::new();
+        }
+    };
+    let now = briqwall_common::now_secs();
+    events.retain(|e| now.saturating_sub(e.time) <= EVENTS_KEEP_SECS);
+    events
+}
+
+/// Write the activity log. Names that programs looked up are left out: they
+/// come from the DNS cache, which by design never reaches the disk. The
+/// addresses stay, as they do in the app list.
+pub fn save_events<'a>(dir: &Path, events: impl Iterator<Item = &'a briqwall_common::Event>) -> Result<()> {
+    let stripped: Vec<briqwall_common::Event> = events
+        .cloned()
+        .map(|mut e| {
+            if let briqwall_common::EventKind::Blocked { host, host_verified, .. } = &mut e.kind {
+                *host = None;
+                *host_verified = false;
+            }
+            e
+        })
+        .collect();
+    write_atomic(dir, "events.json", &serde_json::to_vec(&stripped)?)
 }
 
 // ---------------------------------------------------------------------------
@@ -314,6 +352,44 @@ pub fn init_logging(dir: &Path, echo: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn activity_log_survives_a_restart_without_looked_up_names() {
+        use briqwall_common::{Direction, Event, EventKind, Mode};
+        let dir = std::env::temp_dir().join(format!("briqwall-events-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(load_events(&dir).is_empty(), "no file yet");
+
+        let now = briqwall_common::now_secs();
+        let blocked = EventKind::Blocked {
+            key: "k".into(),
+            name: "n".into(),
+            remote: "203.0.113.5:443 (HTTPS)".into(),
+            host: Some("private.example.com".into()),
+            host_verified: true,
+            ip: Some("203.0.113.5".parse().unwrap()),
+            direction: Direction::Out,
+            by_rule: false,
+        };
+        let events = vec![
+            Event { seq: 1, time: now - 40 * 24 * 3600, kind: EventKind::Started { version: "old".into(), mode: Mode::Balanced } },
+            Event { seq: 7, time: now - 60, kind: blocked },
+            Event { seq: 8, time: now, kind: EventKind::HelloRemoved },
+        ];
+        save_events(&dir, events.iter()).unwrap();
+        let text = std::fs::read_to_string(dir.join("events.json")).unwrap();
+        assert!(!text.contains("private.example.com"), "looked-up names never reach the disk");
+        assert!(text.contains("203.0.113.5:443"));
+
+        let loaded = load_events(&dir);
+        assert_eq!(loaded.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![7, 8], "entries older than a month are dropped");
+        assert!(matches!(&loaded[0].kind, EventKind::Blocked { host: None, host_verified: false, .. }));
+
+        std::fs::write(dir.join("events.json"), b"not json").unwrap();
+        assert!(load_events(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn uninstall_reverts_only_the_audit_settings_we_made() {

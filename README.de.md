@@ -41,14 +41,15 @@ wenigen Rückfragen betreffen genau die Programme, bei denen sie sinnvoll sind.
 | **ACL-basierte Herkunft statt Pfadlisten** | Für jede `.exe` werden Besitzer und DACL der Datei *und* ihres Ordners ausgewertet. Kann ein normaler Benutzer die Datei ändern, ersetzen oder eine DLL daneben legen, gilt sie als „Benutzerordner“. Damit fallen auch bekannte Lücken wie `C:\Windows\Temp` oder `spool\drivers\color` richtig heraus, an denen reine Pfadregeln scheitern. |
 | **LOLBin-Härtung** | PowerShell, mshta, certutil, rundll32, bitsadmin & Co. sind echt von Microsoft signiert, werden aber von Angreifern zum Nachladen von Schadcode genutzt. Sie bekommen *nicht* automatisch Netzzugang (außer im Modus „Entspannt“). Das gilt auch für **Kopien**: Ein solches Werkzeug wird am Namen erkannt, mit dem es gebaut wurde, nicht am Dateinamen – und eine Windows-Systemdatei außerhalb eines geschützten Ordners wird in keinem Modus automatisch erlaubt. |
 | **Asymmetrische Rechte** | Den Schutz **verschärfen** darf jeder sofort (blockieren, Notfall-Sperre, strengerer Modus). Den Schutz **lockern** braucht einen Nachweis, dass ein Mensch zugestimmt hat: entweder eine **Windows-Hello-Signatur** (Fingerabdruck, Gesicht oder PIN; der Schlüssel liegt im TPM, der Dienst prüft eine Einmal-Nonce plus die exakten Änderungen) oder als Rückfall eine UAC-Abfrage auf dem sicheren Desktop. Mehrere Anfragen lassen sich mit einer Bestätigung erledigen. Schadsoftware im Benutzerkontext kann sich so **nicht selbst freischalten**, auch nicht über die Pipe. |
-| **Inbox statt Pop-up-Flut** | Blockierte, unbekannte Apps landen in einer ruhigen „Anfragen“-Liste mit Klartext-Begründung, Risikostufe und letztem Verbindungsziel. Eine dezente Windows-Benachrichtigung informiert, unterbricht aber nicht. Bei hohem Risiko ist „Blockieren“ die hervorgehobene Option (Nudging zur sicheren Wahl). |
+| **Inbox statt Pop-up-Flut** | Blockierte, unbekannte Apps landen in einer ruhigen „Anfragen“-Liste mit Klartext-Begründung, Risikostufe und letztem Verbindungsziel. Eine dezente Windows-Benachrichtigung informiert, unterbricht aber nicht. Bei hohem Risiko ist „Blockieren“ die hervorgehobene Option (Nudging zur sicheren Wahl); solche Anfragen bleiben bei einem gesammelten „Erlauben“ außen vor. Mehrere neue Anfragen auf einmal kommen als eine Benachrichtigung. Das Aktivitätsprotokoll bleibt 30 Tage erhalten, auch über Neustarts, und nennt bei gelockertem Schutz, wer bestätigt hat (Windows Hello oder Administrator); nachgeschlagene Namen werden nicht gespeichert. |
 | **Prozess-Herkunft** | Gemeinsam genutzte Werkzeuge wie `rundll32.exe` oder PowerShell verwenden Windows und Angreifer gleichermaßen. Deshalb zeigt jede Anfrage, **welche Prozessinstanz** den Versuch ausgelöst hat: Kette der Elternprozesse und vollständige **Befehlszeile** (bei rundll32 also DLL und Funktion). Startet ein Office-Programm, PDF-Reader oder Skript-Host das Werkzeug – ein klassisches Makro-Malware-Muster –, warnt Briqwall deutlich und stuft das Risiko hoch. Technisch: WFP-Ereignisse enthalten keine Prozess-ID, das Sicherheitsereignis 5157 schon; ein Cache deckt kurzlebige Prozesse ab. Befehlszeilen bleiben nur im Arbeitsspeicher. |
 | **Regeln im Voraus** | Regeln entstehen nicht nur als Antwort auf eine Anfrage: Über *Apps › Programm hinzufügen* lässt sich ein beliebiges Programm aufnehmen und entscheiden, bevor es zum ersten Mal ins Netz will. Im selben Detailbereich wird eine eigene Regel auch wieder entfernt. |
 | **Namen statt Adressen** | Der Dienst hört die ETW-Ereignisse des DNS-Clients mit und merkt sich, welcher Name zu welcher Adresse aufgelöst wurde. In einer Anfrage steht dann `telemetry.example.com` neben `45.133.1.20:443`. Der Zwischenspeicher liegt nur im Arbeitsspeicher und wird nie auf Platte geschrieben. |
 | **Befristete Freigaben** | „1 Stunde erlauben“ – danach schließt Briqwall die Tür von selbst. Ideal für PowerShell-Sitzungen oder Installer. |
 | **Herausgeber lernen** | Wer eine signierte App dauerhaft erlaubt, erlaubt damit auch ihre Updates (die oft in neuen, versionierten Ordnern landen) und andere Apps desselben Herausgebers. Abschaltbar, Liste jederzeit einsehbar. |
 | **Manipulationserkennung** | Beim Erlauben merkt sich Briqwall die Identität (Herausgeber bzw. SHA-256). Wird die Datei danach ausgetauscht, wird die Freigabe ausgesetzt und erneut gefragt. |
-| **Netzwerk-Kontext** | Eingehende LAN-Dienste (Dateifreigabe, Casting, Gerätesuche) gibt es nur in vertrauenswürdigen Netzwerken. Im Café-WLAN ist der PC unsichtbar. Die Einstufung folgt Windows, kann aber pro Netzwerk mit einem Klick überschrieben werden. |
+| **Eine Entscheidung pro Produkt** | „Streng“ fragt bei jedem unsignierten Werkzeug eines installierten Programms nach. *Alles in „Git“* vertraut dem Programmordner als Ganzem – nur bei Ordnern, in die ausschließlich Administratoren schreiben dürfen; die Liste steht in den Einstellungen. |
+| **Netzwerk-Kontext** | Eingehende LAN-Dienste (Dateifreigabe, Casting, Gerätesuche) gibt es nur in vertrauenswürdigen Netzwerken. Im Café-WLAN ist der PC unsichtbar. Die Einstufung folgt Windows, kann aber pro Netzwerk mit einem Klick überschrieben werden. Die Freigaben sind im Filter an das Netzwerkprofil von Windows gebunden und schließen sich deshalb von selbst, wenn das Netzwerk wechselt, während der Dienst nicht läuft. |
 | **Ausfallsicher (fail-closed)** | Alle Filter sind **persistent** in der WFP gespeichert. Stürzt der Dienst ab oder wird er beendet, bleibt das letzte Regelwerk aktiv – auch über Neustarts hinweg, schon bevor der Dienst startet. Regelwechsel passieren in einer einzigen WFP-Transaktion, es gibt nie einen ungeschützten Moment. |
 | **Koexistenz mit der Windows-Firewall** | Briqwall nutzt einen eigenen Sublayer. In WFP gewinnt ein Block in *irgendeinem* Sublayer – Briqwall kann den Schutz der Windows-Firewall also nur ergänzen, nie aushebeln. |
 
@@ -219,6 +220,11 @@ Die Branding-Bilder des Installers erzeugt `design\make-installer-images.ps1`.
   git push origin v0.10.0
   ```
 
+* **Festgelegte Actions und Herkunftsnachweis:** Fremde Actions sind auf einen
+  Commit festgelegt (Dependabot schlägt Aktualisierungen vor). Bei öffentlichen
+  Repositories erhält ein Release zusätzlich einen signierten Herkunftsnachweis;
+  ein Download lässt sich mit
+  `gh attestation verify <Datei> --repo <Besitzer>/<Repository>` prüfen.
 * **Code-Signatur (optional):** Sind die Repository-Secrets
   `WINDOWS_CERTIFICATE` (Base64 einer `.pfx`) und
   `WINDOWS_CERTIFICATE_PASSWORD` gesetzt, signiert die Pipeline Programme und
@@ -320,6 +326,26 @@ scripts/          build.ps1 / install.ps1 / uninstall.ps1
 * **Mehrere Windows-Konten:** Jedes Konto richtet einen eigenen Hello-Schlüssel
   ein; Konten ohne Schlüssel bestätigen per UAC. Der Schlüssel selbst verlässt
   das TPM des Rechners nicht, auf dem er entstanden ist.
+* **Wege an einer Anwendungs-Firewall vorbei.** Briqwall entscheidet pro
+  Programm; ein blockiertes Programm kann deshalb über ein erlaubtes nach außen
+  gelangen:
+  * *DNS:* Namen löst der DNS-Client von Windows auf, nicht das Programm. Ein
+    blockiertes Programm kann Daten in den Namen verstecken, die es nachschlägt.
+  * *Systemdienste:* Downloads über BITS oder Seiten in einem Browser oder
+    WebView, den das Programm startet, laufen unter dem Namen des Dienstes bzw.
+    Browsers. Briqwall vermerkt im Aktivitätsprotokoll (und meldet), wenn ein
+    Browser oder ein erlaubtes Werkzeug von einem Programm gestartet wird, das
+    selbst nicht ins Netz darf – verhindern kann es das nicht.
+  * *WSL 2, Hyper-V, Windows-Sandbox:* Deren Verkehr läuft nicht über die
+    Schicht, auf der Windows das Programm kennt; Briqwall sieht ihn nicht.
+* **Windows Hello:** Die Abfrage kann nicht anzeigen, was bestätigt wird, und
+  jedes Programm des Benutzers kann eine Signatur anfordern. Lehnen Sie eine
+  Hello-Abfrage ab, die Sie nicht selbst ausgelöst haben; das
+  Aktivitätsprotokoll zeigt jede bestätigte Änderung und wer sie bestätigt hat.
+* **Administrator-Sitzungen:** Ist die Benutzerkontensteuerung ausgeschaltet
+  oder wurde Briqwall als Administrator gestartet, werden Änderungen ohne
+  Nachfrage übernommen – für jedes so gestartete Programm. Die Übersicht weist
+  darauf hin.
 * **Notfall:** Sollte etwas die Verbindung blockieren, entfernt
   `briqwall-service reset` (als Administrator) sofort alle Filter.
 

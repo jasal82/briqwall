@@ -29,6 +29,9 @@ pub enum Cond {
     /// Address and mask in host byte order.
     RemoteV4 { addr: u32, mask: u32 },
     RemoteV6 { addr: [u8; 16], prefix: u8 },
+    /// Network category of the interface as Windows sees it right now.
+    /// Several of these in one filter mean "any of them".
+    Profile(u32),
 }
 
 #[derive(Clone, Debug)]
@@ -127,7 +130,26 @@ impl Engine {
         }
     }
 
+    /// Add a filter. If Windows turns it down and it carries a network
+    /// profile condition, it is added once more without: the condition only
+    /// narrows a permit that was correct at the moment it was compiled, and a
+    /// permit that is missing altogether would cut off file sharing at home.
     pub fn add_filter(&self, spec: &FilterSpec) -> Result<u64> {
+        match self.add_filter_as_is(spec) {
+            Err(e) if spec.conds.iter().any(|c| matches!(c, Cond::Profile(_))) => {
+                static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                if !WARNED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    log::warn!("Filter mit Netzwerkprofil-Bedingung abgelehnt, setze ihn ohne: {e:#}");
+                }
+                let mut plain = spec.clone();
+                plain.conds.retain(|c| !matches!(c, Cond::Profile(_)));
+                self.add_filter_as_is(&plain)
+            }
+            other => other,
+        }
+    }
+
+    fn add_filter_as_is(&self, spec: &FilterSpec) -> Result<u64> {
         // Everything the condition array points to must outlive FwpmFilterAdd0.
         let mut blobs: Vec<Box<FWP_BYTE_BLOB>> = Vec::new();
         let mut datas: Vec<Vec<u8>> = Vec::new();
@@ -170,6 +192,11 @@ impl Engine {
                     fc.matchType = FWP_MATCH_FLAGS_ALL_SET;
                     fc.conditionValue.r#type = FWP_UINT32;
                     fc.conditionValue.Anonymous.uint32 = FWP_CONDITION_FLAG_IS_LOOPBACK;
+                }
+                Cond::Profile(category) => {
+                    fc.fieldKey = FWPM_CONDITION_CURRENT_PROFILE_ID;
+                    fc.conditionValue.r#type = FWP_UINT32;
+                    fc.conditionValue.Anonymous.uint32 = *category;
                 }
                 Cond::RemoteV4 { addr, mask } => {
                     let mut m = Box::new(FWP_V4_ADDR_AND_MASK { addr: *addr, mask: *mask });

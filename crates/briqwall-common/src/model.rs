@@ -162,6 +162,9 @@ pub enum Reason {
     /// On a network share: the service does not open files there (it would
     /// log on to that server as this computer), so nothing is known about it.
     Unverified,
+    /// Installed and unsigned, in a program folder the user trusted as a
+    /// whole (strict mode would ask for each of its tools otherwise).
+    TrustedFolder(String),
 }
 
 /// Notable location of an executable. Aliases keep state files of older
@@ -278,6 +281,10 @@ pub struct AppInfo {
     /// itself, or another program of the user, claims to have looked up.
     #[serde(default)]
     pub last_host_verified: bool,
+    /// Program folder an installed app belongs to (`C:\Program Files\Git`),
+    /// the unit the user can trust as a whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_folder: Option<String>,
 }
 
 /// One process instance that triggered a blocked connection: its command line
@@ -326,6 +333,10 @@ pub struct Settings {
     pub learned_publishers: Vec<String>,
     /// Network id -> trusted. Missing entries follow the Windows network category.
     pub network_trust: BTreeMap<String, bool>,
+    /// Program folders whose installed (admin-only) programs are trusted even
+    /// without a signature. Only matters in strict mode.
+    #[serde(default)]
+    pub trusted_folders: Vec<String>,
 }
 
 impl Default for Settings {
@@ -337,6 +348,7 @@ impl Default for Settings {
             learn_publishers: true,
             learned_publishers: Vec::new(),
             network_trust: BTreeMap::new(),
+            trusted_folders: Vec::new(),
         }
     }
 }
@@ -390,6 +402,23 @@ pub struct HelloUser {
     pub name: String,
 }
 
+/// Who confirmed a change that loosened protection, and how.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Approval {
+    /// Windows account name; empty if it could not be determined.
+    pub account: String,
+    pub method: ApprovalMethod,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApprovalMethod {
+    /// Signature of the account's Windows Hello key.
+    Hello,
+    /// A program running with administrator rights (UAC prompt, or an
+    /// account that is always elevated).
+    Admin,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Direction {
     Out,
@@ -430,6 +459,9 @@ pub enum EventKind {
         key: String,
         name: String,
         rule: Option<UserRule>,
+        /// Set if the change needed a confirmation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<Approval>,
     },
     RuleExpired {
         key: String,
@@ -442,6 +474,8 @@ pub enum EventKind {
     ModeChanged {
         from: Mode,
         to: Mode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<Approval>,
     },
     NetworkChanged {
         name: String,
@@ -456,6 +490,23 @@ pub enum EventKind {
     },
     HelloEnrolled,
     HelloRemoved,
+    /// A program folder was trusted as a whole / is no longer.
+    FolderTrusted {
+        folder: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<Approval>,
+    },
+    FolderUntrusted {
+        folder: String,
+    },
+    /// An allowed browser or tool was started by a program that is itself
+    /// not allowed online – a way to reach the network through someone else.
+    StartedByBlocked {
+        key: String,
+        name: String,
+        by_key: String,
+        by_name: String,
+    },
     /// Applying the rules to WFP failed (technical detail, not translated).
     ApplyFailed {
         detail: String,
@@ -487,6 +538,9 @@ pub enum Request {
     SetNetworkTrust { id: String, trusted: Option<bool> },
     SetOptions { lan_discovery: Option<bool>, learn_publishers: Option<bool> },
     RemovePublisher(String),
+    /// Trust the program folder the app `key` belongs to as a whole.
+    TrustFolder { key: String },
+    UntrustFolder(String),
     /// Several changes at once (one confirmation for all of them).
     Batch(Vec<Request>),
     /// Ask for a single-use nonce to sign with Windows Hello.

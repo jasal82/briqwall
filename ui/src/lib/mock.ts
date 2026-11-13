@@ -321,6 +321,20 @@ export function createMock(): Backend {
       if (req.SetOptions.learn_publishers !== null) status.settings.learn_publishers = req.SetOptions.learn_publishers;
     } else if ("RemovePublisher" in req) {
       status.settings.learned_publishers = status.settings.learned_publishers.filter((p) => p !== req.RemovePublisher);
+    } else if ("TrustFolder" in req) {
+      const folder = apps.find((a) => a.key === req.TrustFolder.key)?.install_folder;
+      if (folder) {
+        status.settings.trusted_folders = [...(status.settings.trusted_folders ?? []), folder];
+        apps = apps.map((a) =>
+          a.install_folder === folder
+            ? { ...a, pending: false, auto_out: "Allow", effective_out: "Allow", reason: { TrustedFolder: folder } }
+            : a,
+        );
+        push({ FolderTrusted: { folder, by: { account: prefs.user_name, method: "Hello" } } });
+      }
+    } else if ("UntrustFolder" in req) {
+      status.settings.trusted_folders = (status.settings.trusted_folders ?? []).filter((f) => f !== req.UntrustFolder);
+      push({ FolderUntrusted: { folder: req.UntrustFolder } });
     }
   };
 
@@ -340,6 +354,7 @@ export function createMock(): Backend {
     system_language: navigator.language.toLowerCase().startsWith("de") ? "de" : "en",
     user_sid: "S-1-5-21-0-0-0-1001",
     user_name: "alex",
+    uac_enabled: true,
   };
 
   // Programs the "file dialog" returns in demo mode, one per click.

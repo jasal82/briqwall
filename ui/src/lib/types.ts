@@ -31,7 +31,8 @@ export type Reason =
   | { LearnedPublisher: string }
   | { KnownPublisher: string }
   | { SignedRelaxed: string }
-  | { UnknownPublisher: string };
+  | { UnknownPublisher: string }
+  | { TrustedFolder: string };
 
 export type Location = "Downloads" | "Temp" | "Desktop" | "Public" | "AppData" | "ProgramFiles" | "UserProfile" | "Removable" | "Network";
 export type NetCategory = "Public" | "Private" | "Domain";
@@ -61,6 +62,8 @@ export interface AppInfo {
   last_host?: string | null;
   /** Reported by a program only administrators can modify; otherwise it is a claim. */
   last_host_verified?: boolean;
+  /** Program folder an installed app belongs to; can be trusted as a whole. */
+  install_folder?: string | null;
   rule: UserRule | null;
   auto_out: Access;
   auto_in: Access;
@@ -97,6 +100,7 @@ export interface Settings {
   learn_publishers: boolean;
   learned_publishers: string[];
   network_trust: Record<string, boolean>;
+  trusted_folders?: string[];
 }
 
 export interface NetworkInfo {
@@ -131,10 +135,13 @@ export type EventKind =
   | { Blocked: { key: string; name: string; remote: string; host?: string | null; host_verified?: boolean; direction: Direction; by_rule: boolean } }
   | { NewRequest: { key: string; name: string; risk: Risk } }
   | { AutoAllowed: { key: string; name: string; reason: Reason } }
-  | { RuleChanged: { key: string; name: string; rule: UserRule | null } }
+  | { RuleChanged: { key: string; name: string; rule: UserRule | null; by?: Approval | null } }
   | { RuleExpired: { key: string; name: string } }
   | { Tampered: { key: string; name: string } }
-  | { ModeChanged: { from: Mode; to: Mode } }
+  | { ModeChanged: { from: Mode; to: Mode; by?: Approval | null } }
+  | { FolderTrusted: { folder: string; by?: Approval | null } }
+  | { FolderUntrusted: { folder: string } }
+  | { StartedByBlocked: { key: string; name: string; by_key: string; by_name: string } }
   | { NetworkChanged: { name: string; trusted: boolean } }
   | { Started: { version: string; mode: Mode } }
   | { PublisherLearned: { publisher: string } }
@@ -157,7 +164,15 @@ export type Request =
   | { SetNetworkTrust: { id: string; trusted: boolean | null } }
   | { SetOptions: { lan_discovery: boolean | null; learn_publishers: boolean | null } }
   | { RemovePublisher: string }
+  | { TrustFolder: { key: string } }
+  | { UntrustFolder: string }
   | { RemoveHello: { sid: string } };
+
+/** Who confirmed a change that loosened protection, and how. */
+export interface Approval {
+  account: string;
+  method: "Hello" | "Admin";
+}
 
 export interface HelloUser {
   sid: string;
@@ -186,6 +201,8 @@ export interface UiPrefs {
   /** Windows account this UI runs as. */
   user_sid: string;
   user_name: string;
+  /** User Account Control is switched on. */
+  uac_enabled: boolean;
 }
 
 /** Outcome of picking a program in the file dialog. */

@@ -33,6 +33,7 @@ class Store {
     system_language: "en",
     user_sid: "",
     user_name: "",
+    uac_enabled: true,
   });
 
   page = $state<Page>("overview");

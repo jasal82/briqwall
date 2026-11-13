@@ -555,6 +555,48 @@ pub fn owned_by_admins(path: &str) -> bool {
     }
 }
 
+/// Program folders of this Windows installation, lower-case.
+pub fn program_dirs() -> Vec<String> {
+    let mut dirs: Vec<String> = ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"]
+        .iter()
+        .filter_map(|v| std::env::var(v).ok())
+        .map(|d| d.trim_end_matches('\\').to_lowercase())
+        .filter(|d| !d.is_empty())
+        .collect();
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+/// Account name for a SID string ("S-1-5-21-…"), e.g. "Kim".
+pub fn account_name(sid: &str) -> Option<String> {
+    use windows::Win32::Security::Authorization::ConvertStringSidToSidW;
+    use windows::Win32::Security::{LookupAccountSidW, SID_NAME_USE};
+    let w = wide(sid);
+    unsafe {
+        let mut psid = PSID::default();
+        ConvertStringSidToSidW(PCWSTR(w.as_ptr()), &mut psid).ok()?;
+        let mut name = [0u16; 257];
+        let mut name_len = name.len() as u32;
+        let mut domain = [0u16; 257];
+        let mut domain_len = domain.len() as u32;
+        let mut kind = SID_NAME_USE::default();
+        let res = LookupAccountSidW(
+            None,
+            psid,
+            Some(PWSTR(name.as_mut_ptr())),
+            &mut name_len,
+            Some(PWSTR(domain.as_mut_ptr())),
+            &mut domain_len,
+            &mut kind,
+        );
+        let _ = LocalFree(Some(HLOCAL(psid.0)));
+        res.ok()?;
+        let name = clean_label(&from_wide(&name), 80);
+        (!name.is_empty()).then_some(name)
+    }
+}
+
 /// SID of the account a token belongs to.
 pub(crate) fn token_user_sid(token: HANDLE) -> Option<String> {
     use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_USER};
@@ -660,6 +702,14 @@ mod tests {
                 println!("{root} type={kind} bus={:?} trusted={}", volume_bus(&root), on_trusted_volume(&root));
             }
         }
+    }
+
+    #[test]
+    fn well_known_accounts_have_names() {
+        assert!(account_name("S-1-5-18").is_some(), "SYSTEM");
+        assert!(account_name("not a sid").is_none());
+        assert!(account_name("S-1-5-21-1-2-3-99999").is_none(), "no such account");
+        assert!(program_dirs().iter().all(|d| !d.ends_with('\\') && *d == d.to_lowercase()));
     }
 
     #[test]

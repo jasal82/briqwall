@@ -4,7 +4,8 @@
   import { store } from "../lib/store.svelte";
   import { now } from "../lib/format";
   import { t, tn } from "../lib/i18n/index.svelte";
-  import type { Request, RuleAccess } from "../lib/types";
+  import { suspiciousParent } from "../lib/OriginInfo.svelte";
+  import type { AppInfo, Request, RuleAccess } from "../lib/types";
 
   let selected = $state<string[]>(store.takeRequestedSelection());
 
@@ -16,6 +17,11 @@
 
   const chosen = $derived(store.pending.filter((a) => selected.includes(a.key)));
   const allSelected = $derived(store.pending.length > 0 && chosen.length === store.pending.length);
+  // Where a card puts "Block" first, one click for many must not allow it
+  // in passing. Those requests stay selected and are decided one by one.
+  const risky = (a: AppInfo) => a.risk === "High" || (a.origins ?? []).some((o) => suspiciousParent(o) !== null);
+  const allowable = $derived(chosen.filter((a) => !risky(a)));
+  const leftOut = $derived(chosen.length - allowable.length);
   const hello = $derived(store.helloEnrolled);
 
   function toggle(key: string) {
@@ -25,10 +31,11 @@
   type Outcome = "bulk.allowed" | "bulk.allowedHour" | "bulk.allowedLan" | "bulk.blocked";
 
   async function decideAll(out: RuleAccess, hours: number | null, outcome: Outcome) {
-    const reqs: Request[] = chosen.map((a) => ({
+    const targets = out === "Block" ? chosen : allowable;
+    const reqs: Request[] = targets.map((a) => ({
       SetRule: { key: a.key, rule: { outbound: out, inbound: "Auto", expires: hours ? now() + hours * 3600 : null, created: now() } },
     }));
-    if (await store.actMany(reqs, tn(outcome, reqs.length))) selected = [];
+    if (await store.actMany(reqs, tn(outcome, reqs.length))) selected = selected.filter((k) => !targets.some((a) => a.key === k));
   }
 
   async function snoozeAll() {
@@ -86,9 +93,10 @@
   {#if chosen.length > 0}
     <div class="bulkbar" role="toolbar" aria-label={t("bulk.aria")}>
       <b>{tn("bulk.selected", chosen.length)}</b>
-      <button class="btn primary" onclick={() => decideAll("Allow", null, "bulk.allowed")}>{t("common.allow")}</button>
-      <button class="btn" onclick={() => decideAll("Allow", 1, "bulk.allowedHour")}>{t("bulk.hour")}</button>
-      <button class="btn" onclick={() => decideAll("Lan", null, "bulk.allowedLan")}>{t("req.lan")}</button>
+      {#if leftOut > 0}<span class="bulk-note"><Icon name="alert" size={14} />{tn("bulk.riskyLeft", leftOut)}</span>{/if}
+      <button class="btn primary" disabled={allowable.length === 0} onclick={() => decideAll("Allow", null, "bulk.allowed")}>{t("common.allow")}</button>
+      <button class="btn" disabled={allowable.length === 0} onclick={() => decideAll("Allow", 1, "bulk.allowedHour")}>{t("bulk.hour")}</button>
+      <button class="btn" disabled={allowable.length === 0} onclick={() => decideAll("Lan", null, "bulk.allowedLan")}>{t("req.lan")}</button>
       <button class="btn danger" onclick={() => decideAll("Block", null, "bulk.blocked")}>{t("common.block")}</button>
       <button class="btn ghost" onclick={snoozeAll}>{t("common.later")}</button>
     </div>
