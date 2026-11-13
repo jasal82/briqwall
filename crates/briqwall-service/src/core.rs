@@ -254,6 +254,8 @@ impl Core {
             mode: self.policy_mode(),
             learned: &s.learned_publishers,
             lan_discovery: s.lan_discovery,
+            protected: app.protected,
+            location: app.location_hint,
         });
         app.auto_out = v.out;
         app.auto_in = v.inn;
@@ -629,7 +631,13 @@ impl Core {
         }
         let started = Instant::now();
         let mode = self.state.settings.mode;
-        let base = compiler::base_filters(mode);
+        // The DHCP client lives in svchost.exe; binding the DHCP permits to it
+        // keeps other programs from using the client ports as a way out.
+        let dhcp_client = wfp::app_id_for_path(&format!("{}\\system32\\svchost.exe", self.win_dir));
+        if let Err(e) = &dhcp_client {
+            log::warn!("svchost.exe nicht auflösbar, DHCP-Filter nur an Ports gebunden: {e:#}");
+        }
+        let base = compiler::base_filters(mode, dhcp_client.ok().as_deref());
         let keys: Vec<String> = self.state.apps.keys().cloned().collect();
         let mut per_app: Vec<(String, Compiled)> = Vec::new();
         for k in keys {
@@ -991,26 +999,29 @@ impl Core {
         cand.tampered = false; // a fresh decision supersedes a tamper warning
         self.evaluate(&mut cand);
 
-        let loosens = cand.effective_out.rank() > current.effective_out.rank()
-            || cand.effective_in.rank() > current.effective_in.rank()
-            || (current.tampered && cand.effective_out.rank() > 0);
-        if loosens && !privileged {
+        if policy::loosens(&current, &cand) && !privileged {
             return Response::Denied;
         }
 
         let grants = cand.rule.as_ref().is_some_and(|r| {
             matches!(r.outbound, RuleAccess::Allow | RuleAccess::Lan) || matches!(r.inbound, RuleAccess::Allow | RuleAccess::Lan)
         });
-        if grants && cand.category != Category::Pseudo {
+        // Which binary the permission is for is only (re)recorded together
+        // with a confirmed decision. Otherwise anyone could swap the file and
+        // then "renew" the existing rule to make the new file the expected one.
+        if privileged && grants && cand.category != Category::Pseudo {
             cand.identity = trust::identity(&cand.path, &cand.signature);
         }
         cand.pending = false;
         cand.snoozed_until = None;
 
-
-        // Learn the publisher on a *permanent* allow of a signed user-space app.
-        let learn = self.state.settings.learn_publishers
+        // Learn the publisher on a confirmed, *permanent* allow of a signed
+        // user-space app. A catalog signature names Windows itself, not the
+        // vendor of an app – nothing to learn from.
+        let learn = privileged
+            && self.state.settings.learn_publishers
             && cand.category == Category::UserSpace
+            && !matches!(cand.signature, Signature::Valid { catalog: true, .. })
             && cand.rule.as_ref().is_some_and(|r| r.expires.is_none() && r.outbound == RuleAccess::Allow);
         let publisher = cand.signature.publisher().map(str::to_string);
 

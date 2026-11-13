@@ -71,13 +71,24 @@ pub fn lan_v6() -> Vec<Cond> {
     ]
 }
 
-/// Filters that do not depend on individual apps.
-pub fn base_filters(mode: Mode) -> Compiled {
+/// Filters that do not depend on individual apps. `dhcp_client` is the app id
+/// of the process hosting the Windows DHCP client (svchost.exe); without it
+/// the DHCP permits are bound to the client ports only.
+pub fn base_filters(mode: Mode, dhcp_client: Option<&[u8]>) -> Compiled {
     let mut out = Vec::new();
     if mode == Mode::Off {
         return out;
     }
     let o = Purpose::Other;
+    // These permits outrank everything, lockdown included, so they must match
+    // the DHCP client and nothing else: its own ports on both ends (the same
+    // shape as Windows' built-in DHCP rules). "Any program to port 67" would
+    // be a way out for every blocked app.
+    let dhcp = |local: u16, remote: u16| {
+        let mut c = vec![Cond::Protocol(PROTO_UDP), Cond::LocalPort(local), Cond::RemotePort(remote)];
+        c.extend(dhcp_client.map(|id| Cond::AppId(id.to_vec())));
+        c
+    };
 
     // Loopback is never filtered.
     for (layer, n) in [
@@ -90,36 +101,10 @@ pub fn base_filters(mode: Mode) -> Compiled {
     }
 
     // DHCP so the machine keeps its address even in lockdown.
-    out.push((
-        spec("DHCP aus v4", LAYER_OUT_V4, W_ALWAYS, true, vec![
-            Cond::Protocol(PROTO_UDP),
-            Cond::RemotePort(67),
-        ]),
-        o.clone(),
-    ));
-    out.push((
-        spec("DHCP ein v4", LAYER_IN_V4, W_ALWAYS, true, vec![
-            Cond::Protocol(PROTO_UDP),
-            Cond::LocalPort(68),
-            Cond::RemotePort(67),
-        ]),
-        o.clone(),
-    ));
-    out.push((
-        spec("DHCPv6 aus", LAYER_OUT_V6, W_ALWAYS, true, vec![
-            Cond::Protocol(PROTO_UDP),
-            Cond::RemotePort(547),
-        ]),
-        o.clone(),
-    ));
-    out.push((
-        spec("DHCPv6 ein", LAYER_IN_V6, W_ALWAYS, true, vec![
-            Cond::Protocol(PROTO_UDP),
-            Cond::LocalPort(546),
-            Cond::RemotePort(547),
-        ]),
-        o.clone(),
-    ));
+    out.push((spec("DHCP aus v4", LAYER_OUT_V4, W_ALWAYS, true, dhcp(68, 67)), o.clone()));
+    out.push((spec("DHCP ein v4", LAYER_IN_V4, W_ALWAYS, true, dhcp(68, 67)), o.clone()));
+    out.push((spec("DHCPv6 aus", LAYER_OUT_V6, W_ALWAYS, true, dhcp(546, 547)), o.clone()));
+    out.push((spec("DHCPv6 ein", LAYER_IN_V6, W_ALWAYS, true, dhcp(546, 547)), o.clone()));
 
     if mode == Mode::Lockdown {
         for (layer, dir, n) in [
@@ -261,23 +246,47 @@ mod tests {
 
     #[test]
     fn off_has_no_filters() {
-        assert!(base_filters(Mode::Off).is_empty());
+        assert!(base_filters(Mode::Off, None).is_empty());
         assert!(app_filters("k", "n", &[1, 2], rule(Access::Allow), rule(Access::Allow), Mode::Off, true).is_empty());
     }
 
     #[test]
     fn lockdown_blocks_everything_but_keeps_loopback() {
-        let f = base_filters(Mode::Lockdown);
+        let f = base_filters(Mode::Lockdown, None);
         assert_eq!(f.iter().filter(|(_, p)| matches!(p, Purpose::Lockdown(_))).count(), 4);
         assert!(f.iter().any(|(s, _)| s.permit && matches!(s.conds[..], [Cond::Loopback])));
         assert!(!f.iter().any(|(_, p)| matches!(p, Purpose::DefaultBlock(_))));
     }
 
+    /// The DHCP permits outrank lockdown. They must not double as a way out
+    /// for other programs ("UDP to port 67 on any host").
+    #[test]
+    fn dhcp_permits_match_only_the_dhcp_client() {
+        let has = |s: &FilterSpec, want: fn(&Cond) -> bool| s.conds.iter().any(want);
+        for mode in [Mode::Relaxed, Mode::Balanced, Mode::Strict, Mode::Lockdown] {
+            let f = base_filters(mode, Some(&[7, 7]));
+            let dhcp: Vec<&FilterSpec> = f.iter().map(|(s, _)| s).filter(|s| s.name.contains("DHCP")).collect();
+            assert_eq!(dhcp.len(), 4, "{mode:?}");
+            for s in dhcp {
+                assert!(s.permit && s.weight == W_ALWAYS);
+                assert!(has(s, |c| matches!(c, Cond::Protocol(PROTO_UDP))), "{}", s.name);
+                assert!(has(s, |c| matches!(c, Cond::LocalPort(68 | 546))), "{} needs the client port", s.name);
+                assert!(has(s, |c| matches!(c, Cond::RemotePort(67 | 547))), "{}", s.name);
+                assert!(has(s, |c| matches!(c, Cond::AppId(id) if id == &[7, 7])), "{} needs the app", s.name);
+            }
+            // Every permit above the lockdown block is narrowed by a condition.
+            assert!(f.iter().all(|(s, _)| !s.permit || !s.conds.is_empty()));
+        }
+        // Without a resolvable svchost the ports still narrow the permit.
+        let f = base_filters(Mode::Lockdown, None);
+        assert!(f.iter().filter(|(s, _)| s.name.contains("DHCP")).all(|(s, _)| s.conds.len() == 3));
+    }
+
     #[test]
     fn relaxed_leaves_inbound_to_windows() {
-        let f = base_filters(Mode::Relaxed);
+        let f = base_filters(Mode::Relaxed, None);
         assert!(!f.iter().any(|(_, p)| *p == Purpose::DefaultBlock(Direction::In)));
-        let b = base_filters(Mode::Balanced);
+        let b = base_filters(Mode::Balanced, None);
         assert!(b.iter().any(|(_, p)| *p == Purpose::DefaultBlock(Direction::In)));
     }
 

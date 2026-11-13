@@ -39,7 +39,7 @@ wenigen Rückfragen betreffen genau die Programme, bei denen sie sinnvoll sind.
 | Idee | Umsetzung |
 |---|---|
 | **ACL-basierte Herkunft statt Pfadlisten** | Für jede `.exe` werden Besitzer und DACL der Datei *und* ihres Ordners ausgewertet. Kann ein normaler Benutzer die Datei ändern, ersetzen oder eine DLL daneben legen, gilt sie als „Benutzerordner“. Damit fallen auch bekannte Lücken wie `C:\Windows\Temp` oder `spool\drivers\color` richtig heraus, an denen reine Pfadregeln scheitern. |
-| **LOLBin-Härtung** | PowerShell, mshta, certutil, rundll32, bitsadmin & Co. sind echt von Microsoft signiert, werden aber von Angreifern zum Nachladen von Schadcode genutzt. Sie bekommen *nicht* automatisch Netzzugang (außer im Modus „Entspannt“). |
+| **LOLBin-Härtung** | PowerShell, mshta, certutil, rundll32, bitsadmin & Co. sind echt von Microsoft signiert, werden aber von Angreifern zum Nachladen von Schadcode genutzt. Sie bekommen *nicht* automatisch Netzzugang (außer im Modus „Entspannt“). Das gilt auch für **Kopien**: Ein solches Werkzeug wird am Namen erkannt, mit dem es gebaut wurde, nicht am Dateinamen – und eine Windows-Systemdatei außerhalb eines geschützten Ordners wird in keinem Modus automatisch erlaubt. |
 | **Asymmetrische Rechte** | Den Schutz **verschärfen** darf jeder sofort (blockieren, Notfall-Sperre, strengerer Modus). Den Schutz **lockern** braucht einen Nachweis, dass ein Mensch zugestimmt hat: entweder eine **Windows-Hello-Signatur** (Fingerabdruck, Gesicht oder PIN; der Schlüssel liegt im TPM, der Dienst prüft eine Einmal-Nonce plus die exakten Änderungen) oder als Rückfall eine UAC-Abfrage auf dem sicheren Desktop. Mehrere Anfragen lassen sich mit einer Bestätigung erledigen. Schadsoftware im Benutzerkontext kann sich so **nicht selbst freischalten**, auch nicht über die Pipe. |
 | **Inbox statt Pop-up-Flut** | Blockierte, unbekannte Apps landen in einer ruhigen „Anfragen“-Liste mit Klartext-Begründung, Risikostufe und letztem Verbindungsziel. Eine dezente Windows-Benachrichtigung informiert, unterbricht aber nicht. Bei hohem Risiko ist „Blockieren“ die hervorgehobene Option (Nudging zur sicheren Wahl). |
 | **Prozess-Herkunft** | Gemeinsam genutzte Werkzeuge wie `rundll32.exe` oder PowerShell verwenden Windows und Angreifer gleichermaßen. Deshalb zeigt jede Anfrage, **welche Prozessinstanz** den Versuch ausgelöst hat: Kette der Elternprozesse und vollständige **Befehlszeile** (bei rundll32 also DLL und Funktion). Startet ein Office-Programm, PDF-Reader oder Skript-Host das Werkzeug – ein klassisches Makro-Malware-Muster –, warnt Briqwall deutlich und stuft das Risiko hoch. Technisch: WFP-Ereignisse enthalten keine Prozess-ID, das Sicherheitsereignis 5157 schon; ein Cache deckt kurzlebige Prozesse ab. Befehlszeilen bleiben nur im Arbeitsspeicher. |
@@ -59,7 +59,7 @@ wenigen Rückfragen betreffen genau die Programme, bei denen sie sinnvoll sind.
 | Windows-Komponenten | ✅ | ✅ | ✅ |
 | Installiert + signiert | ✅ | ✅ | ✅ |
 | Installiert, unsigniert | ✅ | ✅ | ❓ |
-| Benutzerordner, bekannter Herausgeber | ✅ | ✅ | ❓ |
+| Benutzerordner, bekannter Herausgeber | ✅ | ✅ (❓ in Downloads, Temp, Desktop, Öffentlich, Wechseldatenträger) | ❓ |
 | Benutzerordner, unbekannter Herausgeber | ✅ | ❓ | ❓ |
 | Benutzerordner, unsigniert | ❓ | ❓ | ❓ |
 | Missbrauchte Windows-Werkzeuge (LOLBins) | ✅ | ❓ | ❓ |
@@ -94,7 +94,7 @@ und **Aus**.
 
 | Gewicht | Inhalt |
 |---|---|
-| 15 | Loopback, DHCP (immer erlaubt, auch in der Sperre) |
+| 15 | Loopback, DHCP (immer erlaubt, auch in der Sperre; DHCP nur für den DHCP-Client von Windows und dessen Ports) |
 | 14 | Notfall-Sperre: alles blockieren |
 | 13 | Notwendiges ICMP (PMTU, IPv6-Nachbarerkennung); Echo-Request bleibt zu |
 | 12 | Explizite Blockierregeln pro App |
@@ -120,8 +120,17 @@ sie zurückgesetzt.
   Identität prüfen, aber nie in ihrem Namen handeln.
 * Die Erhöhung wird per `ImpersonateNamedPipeClient` + `CheckTokenMembership`
   geprüft. Gefilterte UAC-Token zählen nicht als Administrator.
-* Das Datenverzeichnis `C:\ProgramData\Briqwall` erhält eine geschützte DACL
-  (SYSTEM/Administratoren schreiben, Benutzer lesen).
+* Das Datenverzeichnis `C:\ProgramData\Briqwall` wird direkt mit einer
+  geschützten DACL angelegt (SYSTEM/Administratoren schreiben, Benutzer lesen).
+  Ein Ordner, der schon da ist und nicht SYSTEM oder den Administratoren
+  gehört (oder eine Verknüpfung ist), wird beiseitegeschoben und neu angelegt –
+  in ProgramData darf jeder Benutzer Ordner erstellen.
+* Eine Regel gilt auch dann als Lockerung, wenn sie heute nichts Neues erlaubt,
+  aber länger hält: eine befristete Freigabe verlängern oder eine automatische
+  Freigabe als eigene Regel festschreiben braucht eine Bestätigung.
+* Der erhöhte Helfer (`briqwall.exe --apply`) zeigt die Änderung im Klartext
+  und fragt nach, bevor er sie an den Dienst schickt. Die UAC-Abfrage nennt nur
+  „Briqwall“, nicht die Änderung – und jedes Programm kann den Helfer starten.
 * Das `briqwall:`-Protokoll (Klick auf eine Benachrichtigung) kann nur das Fenster
   öffnen, nie Aktionen auslösen – jede Webseite könnte es aufrufen.
 

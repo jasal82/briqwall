@@ -18,15 +18,18 @@
 
 !macro NSIS_HOOK_PREINSTALL
   ; Upgrade: stop the running service so its executable can be replaced.
+  ; System tools are always called by full path: a bare name is searched in
+  ; the installer's own folder (e.g. Downloads) first, and the installer runs
+  ; elevated.
   !insertmacro BRIQ_DETAIL "Firewall-Dienst wird angehalten …" "Stopping firewall service …"
-  nsExec::ExecToLog 'net stop briqwall'
+  nsExec::ExecToLog '"$SYSDIR\net.exe" stop briqwall'
   Pop $0
 
   ; Migration from the previous product name "xWall". Its service is removed,
   ; its rules (C:\ProgramData\xWall) are adopted by Briqwall on first start.
   ${If} ${FileExists} "$PROGRAMFILES64\xWall\xwall-service.exe"
     !insertmacro BRIQ_DETAIL "Vorgängerversion xWall wird ersetzt (Regeln werden übernommen) …" "Replacing previous version xWall (rules are kept) …"
-    nsExec::ExecToLog 'taskkill /F /IM xwall-ui.exe'
+    nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM xwall-ui.exe'
     Pop $0
     nsExec::ExecToLog '"$PROGRAMFILES64\xWall\xwall-service.exe" uninstall'
     Pop $0
@@ -54,7 +57,7 @@
 !macro NSIS_HOOK_PREUNINSTALL
   ${If} $UpdateMode = 1
     ; Part of an update: keep service registration and filters.
-    nsExec::ExecToLog 'net stop briqwall'
+    nsExec::ExecToLog '"$SYSDIR\net.exe" stop briqwall'
     Pop $0
   ${Else}
     !insertmacro BRIQ_DETAIL "Firewall-Dienst und alle Filter werden entfernt …" "Removing firewall service and all filters …"

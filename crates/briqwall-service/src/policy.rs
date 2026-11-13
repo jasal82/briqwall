@@ -6,7 +6,7 @@
 //! differently from a binary that appeared in Downloads or AppData. Code signing,
 //! known publishers and a list of frequently abused Windows tools refine this.
 
-use briqwall_common::{Access, AppInfo, Category, Mode, Reason, Risk, RuleAccess, Signature};
+use briqwall_common::{Access, AppInfo, Category, Location, Mode, Reason, Risk, RuleAccess, Signature, UserRule};
 
 /// Windows binaries that are signed by Microsoft but routinely abused to download
 /// or run malicious payloads ("living off the land"). Never trusted automatically
@@ -129,6 +129,9 @@ pub struct Inputs<'a> {
     pub mode: Mode,
     pub learned: &'a [String],
     pub lan_discovery: bool,
+    /// Only SYSTEM/Administrators can modify the file or its folder.
+    pub protected: bool,
+    pub location: Option<Location>,
 }
 
 pub fn auto_verdict(i: &Inputs) -> Verdict {
@@ -137,11 +140,14 @@ pub fn auto_verdict(i: &Inputs) -> Verdict {
     let builtin = publisher.is_some_and(is_known_publisher);
     let relaxed = i.mode == Mode::Relaxed;
     let strict = i.mode == Mode::Strict;
+    let drop_zone = i.location.is_some_and(Location::is_risky);
 
     let (out, reason): (Access, Reason) = match i.category {
         Category::Pseudo => (Access::Allow, Reason::Kernel),
         Category::System => (Access::Allow, Reason::System),
-        Category::Lolbin if relaxed => (Access::Allow, Reason::ToolRelaxed),
+        // A copy of such a tool in a user folder is never waved through: the
+        // name on disk is the attacker's choice and a DLL can sit next to it.
+        Category::Lolbin if relaxed && i.protected => (Access::Allow, Reason::ToolRelaxed),
         Category::Lolbin => (Access::Ask, Reason::Tool),
         Category::Installed => match publisher {
             Some(p) => (Access::Allow, Reason::InstalledSigned(p.to_string())),
@@ -150,11 +156,18 @@ pub fn auto_verdict(i: &Inputs) -> Verdict {
         },
         Category::UserSpace => match i.signature {
             Signature::Invalid { .. } => (Access::Ask, Reason::InvalidSignature),
+            // A catalog signature says "this file belongs to Windows". Outside
+            // a protected folder that is a copied system file, whatever it is
+            // called now – no publisher list makes it trustworthy.
+            Signature::Valid { catalog: true, .. } => (Access::Ask, Reason::MisplacedSystemFile),
             Signature::Valid { publisher, .. } if learned => (Access::Allow, Reason::LearnedPublisher(publisher.clone())),
-            Signature::Valid { publisher, .. } if builtin && !strict => {
+            Signature::Valid { publisher, .. } if builtin && !strict && (relaxed || !drop_zone) => {
                 (Access::Allow, Reason::KnownPublisher(publisher.clone()))
             }
             Signature::Valid { publisher, .. } if relaxed => (Access::Allow, Reason::SignedRelaxed(publisher.clone())),
+            Signature::Valid { publisher, .. } if builtin && drop_zone && !strict => {
+                (Access::Ask, Reason::RiskyLocation(publisher.clone()))
+            }
             Signature::Valid { publisher, .. } => (Access::Ask, Reason::UnknownPublisher(publisher.clone())),
             Signature::Unsigned | Signature::Unknown => (Access::Ask, Reason::Unsigned),
         },
@@ -180,14 +193,61 @@ pub fn risk(app: &AppInfo, learned: &[String]) -> Risk {
     }
     match app.category {
         Category::System | Category::Pseudo | Category::Installed => Risk::Low,
-        Category::Lolbin => Risk::Medium,
-        Category::UserSpace => match app.signature.publisher() {
-            Some(p) if is_learned_publisher(p, learned) || is_known_publisher(p) => Risk::Low,
-            Some(_) => Risk::Medium,
-            None if app.location_hint.is_some_and(|l| l.is_risky()) => Risk::High,
-            None => Risk::Medium,
-        },
+        Category::Lolbin if app.protected => Risk::Medium,
+        Category::Lolbin => Risk::High,
+        Category::UserSpace => {
+            let drop_zone = app.location_hint.is_some_and(|l| l.is_risky());
+            match &app.signature {
+                Signature::Valid { catalog: true, .. } => Risk::High,
+                Signature::Valid { publisher, .. } if is_learned_publisher(publisher, learned) => Risk::Low,
+                Signature::Valid { publisher, .. } if is_known_publisher(publisher) && !drop_zone => Risk::Low,
+                Signature::Valid { .. } => Risk::Medium,
+                _ if drop_zone => Risk::High,
+                _ => Risk::Medium,
+            }
+        }
     }
+}
+
+/// How much an explicit rule grants on its own (ignoring the automatic verdict).
+fn grant_rank(r: RuleAccess) -> u8 {
+    match r {
+        RuleAccess::Allow => 2,
+        RuleAccess::Lan => 1,
+        RuleAccess::Auto | RuleAccess::Block => 0,
+    }
+}
+
+/// Does going from `current` to `cand` (same app, new rule, both evaluated)
+/// give the app more than it has now? Such a change needs proof that a human
+/// agreed. Comparing what is effectively allowed is not enough:
+///
+/// * a temporary permission made permanent allows nothing new *today*,
+/// * neither does an explicit "allow" on top of an automatic one – but it
+///   would outlive a stricter mode or a removed publisher.
+pub fn loosens(current: &AppInfo, cand: &AppInfo) -> bool {
+    if cand.effective_out.rank() > current.effective_out.rank()
+        || cand.effective_in.rank() > current.effective_in.rank()
+        || (current.tampered && cand.effective_out.rank() > 0)
+    {
+        return true;
+    }
+    let grants = |r: Option<&UserRule>| r.map_or((0, 0), |r| (grant_rank(r.outbound), grant_rank(r.inbound)));
+    let (old_out, old_in) = grants(current.rule.as_ref());
+    let (new_out, new_in) = grants(cand.rule.as_ref());
+    if new_out > old_out || new_in > old_in {
+        return true;
+    }
+    if new_out > 0 || new_in > 0 {
+        let old_expiry = current.rule.as_ref().and_then(|r| r.expires);
+        let new_expiry = cand.rule.as_ref().and_then(|r| r.expires);
+        match (old_expiry, new_expiry) {
+            (Some(_), None) => return true,
+            (Some(old), Some(new)) if new > old => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn apply(rule: RuleAccess, auto: Access) -> Access {
@@ -228,7 +288,165 @@ mod tests {
     use super::*;
 
     fn inputs<'a>(cat: Category, sig: &'a Signature, mode: Mode) -> Inputs<'a> {
-        Inputs { category: cat, signature: sig, mode, learned: &[], lan_discovery: true }
+        let protected = cat != Category::UserSpace;
+        Inputs { category: cat, signature: sig, mode, learned: &[], lan_discovery: true, protected, location: None }
+    }
+
+    /// An app as the core would hold it: facts, rule, evaluated verdict.
+    fn app(cat: Category, sig: Signature, auto_out: Access, rule: Option<UserRule>) -> AppInfo {
+        let mut a = AppInfo {
+            key: "k".into(),
+            path: "k".into(),
+            name: "n".into(),
+            signature: sig,
+            category: cat,
+            protected: cat != Category::UserSpace,
+            location_hint: None,
+            first_seen: 0,
+            last_seen: 0,
+            last_blocked: None,
+            blocked_count: 0,
+            inbound_blocked_count: 0,
+            last_remote: None,
+            rule,
+            auto_out,
+            auto_in: Access::Block,
+            reason: Reason::Unknown,
+            effective_out: Access::Ask,
+            effective_in: Access::Block,
+            risk: Risk::Medium,
+            pending: false,
+            snoozed_until: None,
+            tampered: false,
+            identity: None,
+            file_stamp: None,
+            raw_app_id: None,
+            origins: Vec::new(),
+            last_host: None,
+        };
+        (a.effective_out, a.effective_in) = effective(&a);
+        a
+    }
+    fn rule(outbound: RuleAccess, inbound: RuleAccess, expires: Option<u64>) -> Option<UserRule> {
+        Some(UserRule { outbound, inbound, expires, created: 1 })
+    }
+    /// Does replacing the rule of `from` by `to` count as loosening?
+    fn change(auto_out: Access, from: Option<UserRule>, to: Option<UserRule>) -> bool {
+        let current = app(Category::UserSpace, Signature::Unsigned, auto_out, from);
+        let cand = app(Category::UserSpace, Signature::Unsigned, auto_out, to);
+        loosens(&current, &cand)
+    }
+
+    #[test]
+    fn extending_a_temporary_permission_loosens() {
+        use RuleAccess::*;
+        let hour = rule(Allow, Auto, Some(1000));
+        assert!(change(Access::Ask, hour.clone(), rule(Allow, Auto, None)), "1 hour → permanent");
+        assert!(change(Access::Ask, hour.clone(), rule(Allow, Auto, Some(2000))), "later expiry");
+        assert!(change(Access::Ask, hour.clone(), rule(Lan, Auto, None)), "less access, but for longer");
+        assert!(!change(Access::Ask, hour.clone(), rule(Allow, Auto, Some(1000))), "same rule again");
+        assert!(!change(Access::Ask, hour.clone(), rule(Allow, Auto, Some(500))), "shorter");
+        assert!(!change(Access::Ask, hour, rule(Lan, Auto, Some(1000))), "less access, same time");
+        assert!(!change(Access::Ask, rule(Allow, Auto, None), rule(Allow, Auto, Some(1000))), "permanent → temporary");
+    }
+
+    #[test]
+    fn pinning_an_automatic_permission_loosens() {
+        use RuleAccess::*;
+        // Allowed automatically today; an explicit rule would survive a stricter mode.
+        assert!(change(Access::Allow, None, rule(Allow, Auto, None)));
+        assert!(change(Access::Allow, None, rule(Auto, Lan, None)));
+        assert!(change(Access::Allow, rule(Block, Auto, None), rule(Allow, Auto, None)));
+        assert!(change(Access::Allow, rule(Lan, Auto, None), rule(Allow, Auto, None)));
+    }
+
+    #[test]
+    fn tightening_never_needs_confirmation() {
+        use RuleAccess::*;
+        assert!(!change(Access::Allow, None, rule(Block, Auto, None)));
+        assert!(!change(Access::Ask, None, rule(Block, Block, None)));
+        assert!(!change(Access::Ask, rule(Allow, Lan, None), rule(Allow, Block, None)));
+        assert!(!change(Access::Ask, rule(Allow, Auto, None), rule(Lan, Auto, None)));
+        assert!(!change(Access::Ask, rule(Allow, Auto, None), None), "remove a permission");
+        // A block with an end date may be made permanent.
+        assert!(!change(Access::Ask, rule(Block, Auto, Some(1000)), rule(Block, Auto, None)));
+        // Removing a block hands the app back to the automatic verdict.
+        assert!(change(Access::Allow, rule(Block, Auto, None), None));
+        assert!(!change(Access::Ask, rule(Block, Auto, None), None));
+    }
+
+    #[test]
+    fn a_tampered_app_needs_a_fresh_confirmation() {
+        use RuleAccess::*;
+        let mut current = app(Category::UserSpace, Signature::Unsigned, Access::Ask, rule(Allow, Auto, None));
+        current.tampered = true;
+        (current.effective_out, current.effective_in) = effective(&current);
+        let cand = app(Category::UserSpace, Signature::Unsigned, Access::Ask, rule(Allow, Auto, None));
+        assert!(loosens(&current, &cand));
+    }
+
+    #[test]
+    fn copied_system_files_are_never_trusted_by_publisher() {
+        // powershell.exe copied to a user folder keeps its catalog signature.
+        let s = Signature::Valid { publisher: "Microsoft Windows".into(), catalog: true };
+        let learned = vec!["Microsoft Windows".to_string()];
+        for mode in [Mode::Relaxed, Mode::Balanced, Mode::Strict] {
+            let i = Inputs {
+                category: Category::UserSpace,
+                signature: &s,
+                mode,
+                learned: &learned,
+                lan_discovery: true,
+                protected: false,
+                location: Some(Location::AppData),
+            };
+            let v = auto_verdict(&i);
+            assert_eq!((v.out, v.reason), (Access::Ask, Reason::MisplacedSystemFile), "{mode:?}");
+        }
+        let a = app(Category::UserSpace, s, Access::Ask, None);
+        assert_eq!(risk(&a, &learned), Risk::High);
+    }
+
+    #[test]
+    fn lolbin_copy_in_user_folder_always_asks() {
+        let s = signed("Microsoft Corporation");
+        let mut i = inputs(Category::Lolbin, &s, Mode::Relaxed);
+        assert_eq!(auto_verdict(&i).out, Access::Allow, "the real tool is allowed in relaxed mode");
+        i.protected = false;
+        assert_eq!(auto_verdict(&i).out, Access::Ask);
+        let mut a = app(Category::Lolbin, s, Access::Ask, None);
+        assert_eq!(risk(&a, &[]), Risk::Medium);
+        a.protected = false;
+        assert_eq!(risk(&a, &[]), Risk::High);
+    }
+
+    #[test]
+    fn known_publisher_in_a_drop_zone_asks() {
+        let s = signed("Discord Inc.");
+        let at = |location, mode| {
+            let mut i = inputs(Category::UserSpace, &s, mode);
+            i.location = Some(location);
+            auto_verdict(&i)
+        };
+        assert_eq!(at(Location::AppData, Mode::Balanced).out, Access::Allow);
+        for zone in [Location::Downloads, Location::Temp, Location::Desktop, Location::Public, Location::Removable] {
+            let v = at(zone, Mode::Balanced);
+            assert_eq!((v.out, v.reason), (Access::Ask, Reason::RiskyLocation("Discord Inc.".into())), "{zone:?}");
+        }
+        // Relaxed allows every valid signature, strict none from the built-in list.
+        assert_eq!(at(Location::Downloads, Mode::Relaxed).out, Access::Allow);
+        assert_eq!(at(Location::Downloads, Mode::Strict).reason, Reason::UnknownPublisher("Discord Inc.".into()));
+        // A publisher the user trusted stays trusted wherever the file is.
+        let learned = vec!["Discord Inc.".to_string()];
+        let mut i = inputs(Category::UserSpace, &s, Mode::Balanced);
+        i.location = Some(Location::Downloads);
+        i.learned = &learned;
+        assert_eq!(auto_verdict(&i).out, Access::Allow);
+
+        let mut a = app(Category::UserSpace, s, Access::Ask, None);
+        assert_eq!(risk(&a, &[]), Risk::Low);
+        a.location_hint = Some(Location::Downloads);
+        assert_eq!(risk(&a, &[]), Risk::Medium);
     }
     fn signed(p: &str) -> Signature {
         Signature::Valid { publisher: p.into(), catalog: false }
@@ -271,7 +489,15 @@ mod tests {
     fn learned_publisher_is_trusted_even_in_strict() {
         let s = signed("Tiny Indie Dev");
         let learned = vec!["tiny indie dev".to_string()];
-        let i = Inputs { category: Category::UserSpace, signature: &s, mode: Mode::Strict, learned: &learned, lan_discovery: true };
+        let i = Inputs {
+            category: Category::UserSpace,
+            signature: &s,
+            mode: Mode::Strict,
+            learned: &learned,
+            lan_discovery: true,
+            protected: false,
+            location: None,
+        };
         assert_eq!(auto_verdict(&i).out, Access::Allow);
     }
 

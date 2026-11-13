@@ -77,8 +77,11 @@ fn open_engine() -> Result<wfp::Engine> {
 fn start(tx: Sender<Msg>, rx: Receiver<Msg>, echo: bool) -> Result<std::thread::JoinHandle<()>> {
     let elevated = is_elevated();
     let dir = store::data_dir(elevated);
-    store::prepare_dir(&dir, elevated)?;
+    let dir_notes = store::prepare_dir(&dir, elevated)?;
     store::init_logging(&dir, echo);
+    for note in dir_notes {
+        log::warn!("{note}");
+    }
     store::migrate_legacy(&dir, elevated);
     log::info!("Briqwall {} startet (Daten: {}, erhöht: {elevated})", briqwall_common::VERSION, dir.display());
 
@@ -284,6 +287,8 @@ fn check(path: &str) -> Result<()> {
             mode,
             learned: &[],
             lan_discovery: true,
+            protected: f.protected,
+            location: f.location_hint,
         });
         println!("{:<14}{}={:?} {}={:?} – {:?}", format!("{}:", cli_text::mode_name(mode)), t("aus", "out"), v.out, t("ein", "in"), v.inn, v.reason);
     }

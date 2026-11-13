@@ -121,7 +121,7 @@ sense.
 | Idea | Implementation |
 |---|---|
 | **ACL-based origin instead of path lists** | For every `.exe`, Briqwall evaluates the owner and DACL of the file *and* its folder. If a normal user could modify or replace the file, or plant a DLL next to it, it counts as “user folder”. Well-known gaps like `C:\Windows\Temp` or `spool\drivers\color`, where plain path rules fail, are classified correctly. |
-| **LOLBin hardening** | PowerShell, mshta, certutil, rundll32, bitsadmin & co. are genuinely signed by Microsoft, yet attackers use them to download malware. They do *not* get network access automatically (except in “Relaxed” mode). |
+| **LOLBin hardening** | PowerShell, mshta, certutil, rundll32, bitsadmin & co. are genuinely signed by Microsoft, yet attackers use them to download malware. They do *not* get network access automatically (except in “Relaxed” mode). That includes **copies**: such a tool is recognized by the name it was built with, not its file name – and a Windows system file outside a protected folder is not allowed automatically in any mode. |
 | **Asymmetric rights** | Anyone may **tighten** protection instantly (block, lockdown, stricter level). **Loosening** requires proof that a human agreed: either a **Windows Hello signature** (fingerprint, face or PIN; the key lives in the TPM, the service verifies a single-use nonce plus the exact changes) or, as a fallback, a UAC prompt on the secure desktop. Several requests can be confirmed at once. Malware running as the user therefore **cannot unlock itself**, not even through the pipe. |
 | **Inbox instead of pop-up floods** | Blocked, unknown apps land in a calm “Requests” list with a plain-language reason, risk level and last target. A subtle Windows notification informs without interrupting. For high-risk apps, “Block” is the highlighted option (nudging towards the safe choice). |
 | **Process origin** | WFP net events carry no process id, but the Security audit event 5157 does. For each attempt Briqwall blocked, the service reads the command line and the parent chain of exactly that process (a cache covers short-lived processes). Command lines stay in memory only and are never written to disk. |
@@ -141,7 +141,7 @@ sense.
 | Windows components | ✅ | ✅ | ✅ |
 | Installed + signed | ✅ | ✅ | ✅ |
 | Installed, unsigned | ✅ | ✅ | ❓ |
-| User folder, well-known publisher | ✅ | ✅ | ❓ |
+| User folder, well-known publisher | ✅ | ✅ (❓ in Downloads, Temp, Desktop, Public, removable drives) | ❓ |
 | User folder, unknown publisher | ✅ | ❓ | ❓ |
 | User folder, unsigned | ❓ | ❓ | ❓ |
 | Abused Windows tools (LOLBins) | ✅ | ❓ | ❓ |
@@ -176,7 +176,7 @@ tray menu) and **Off**.
 
 | Weight | Content |
 |---|---|
-| 15 | Loopback, DHCP (always allowed, even in lockdown) |
+| 15 | Loopback, DHCP (always allowed, even in lockdown; DHCP only for the Windows DHCP client and its ports) |
 | 14 | Lockdown: block everything |
 | 13 | Essential ICMP (PMTU, IPv6 neighbor discovery); echo request stays closed |
 | 12 | Explicit per-app block rules |
@@ -201,8 +201,17 @@ uninstalling restores them.
   identity but never act on their behalf.
 * Elevation is checked via `ImpersonateNamedPipeClient` + `CheckTokenMembership`.
   Filtered UAC tokens do not count as administrator.
-* The data directory `C:\ProgramData\Briqwall` gets a protected DACL
-  (SYSTEM/Administrators write, users read).
+* The data directory `C:\ProgramData\Briqwall` is created with a protected
+  DACL in one step (SYSTEM/Administrators write, users read). A folder that is
+  already there and not owned by SYSTEM or the Administrators (or is a link)
+  is moved aside and created anew – any user may create folders in
+  ProgramData.
+* A rule also counts as loosening when it allows nothing new today but lasts
+  longer: extending a temporary permission, or pinning an automatic permission
+  as a rule of its own, needs a confirmation.
+* The elevated helper (`briqwall.exe --apply`) spells the change out and asks
+  before it sends it to the service. The UAC prompt only names “Briqwall”, not
+  the change – and any program can start the helper.
 * The `briqwall:` protocol (clicking a notification) can only open the window,
   never trigger actions – any website could invoke it.
 * The service sends **codes, not sentences** (reasons, locations, errors,

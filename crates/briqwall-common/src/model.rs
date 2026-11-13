@@ -153,6 +153,12 @@ pub enum Reason {
     UnknownPublisher(String),
     /// Unsigned in a user-writable location.
     Unsigned,
+    /// Signed as part of Windows (catalog signature) but lying in a
+    /// user-writable location: typically a copied or renamed system tool.
+    MisplacedSystemFile,
+    /// Well-known publisher, but the file sits in a classic drop zone
+    /// (Downloads, Temp, Desktop, …) where anyone can put a DLL next to it.
+    RiskyLocation(String),
 }
 
 /// Notable location of an executable. Aliases keep state files of older

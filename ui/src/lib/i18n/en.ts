@@ -94,6 +94,10 @@ export const en = {
   "reason.SignedRelaxed": "Signed by “{publisher}” (allowed in “Relaxed” mode).",
   "reason.UnknownPublisher": "Signed by “{publisher}”, but located in a user folder and not yet known to Briqwall.",
   "reason.Unsigned": "Not signed and located in a folder any program can write to – a typical way for malware to spread.",
+  "reason.MisplacedSystemFile":
+    "A Windows system file outside the Windows folder, in a place any program can write to. Copied and renamed system tools are a common disguise.",
+  "reason.RiskyLocation":
+    "Signed by the well-known publisher “{publisher}”, but started from a folder for downloads or temporary files, where any program can put files next to it.",
 
   // signatures
   "sig.catalog": "catalog",

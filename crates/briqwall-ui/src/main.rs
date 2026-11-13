@@ -7,6 +7,7 @@
 #![windows_subsystem = "windows"]
 
 mod backend;
+mod confirm;
 mod hello;
 mod i18n;
 mod icon;
@@ -118,9 +119,22 @@ fn main() {
         .expect("Briqwall UI failed to start");
 }
 
+/// Exit codes: 0 applied, 2 not applicable / service unreachable, 3 rejected
+/// by the service, 4 declined by the user (see `platform::run_elevated`).
 fn apply_helper(hex: Option<&String>) -> i32 {
     let Some(bytes) = hex.and_then(|h| unhex(h)) else { return 2 };
     let Ok(req) = serde_json::from_slice::<Request>(&bytes) else { return 2 };
+    // Only plain policy changes, and only after the user has seen them: the
+    // UAC prompt that got us here names Briqwall, not the change.
+    let Some(list) = confirm::changes(&req) else { return 2 };
+    // Not elevated: the service treats us like any other program, there is
+    // nothing to protect with a dialog that others could click for the user.
+    if briqwall_common::util::is_elevated() {
+        i18n::set(&language_pref());
+        if !confirm::ask(&confirm::message(&list, &confirm::Names::fetch())) {
+            return 4;
+        }
+    }
     match briqwall_common::ipc::call(&req) {
         Ok(Response::Ok) => 0,
         Ok(Response::Denied) => 3,

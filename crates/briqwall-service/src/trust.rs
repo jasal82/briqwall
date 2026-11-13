@@ -53,17 +53,24 @@ pub fn gather(path: &str, win_dir: &str) -> Facts {
     let file_name = lower.rsplit('\\').next().unwrap_or(&lower).to_string();
     let stamp = file_stamp(path);
     let exists = stamp.is_some();
-    let name = display_name(path).unwrap_or_else(|| {
+    let version = VersionInfo::load(path);
+    let name = version.as_ref().and_then(VersionInfo::display_name).unwrap_or_else(|| {
         path.rsplit('\\').next().unwrap_or(path).trim_end_matches(".exe").trim_end_matches(".EXE").to_string()
     });
     let signature = if exists { verify_signature(path) } else { Signature::Unknown };
     let protected = exists && is_protected(path);
     let in_windows = lower.starts_with(&format!("{win_dir}\\"));
 
-    let category = if !protected {
-        Category::UserSpace
-    } else if policy::is_lolbin(&file_name) {
+    // The name on disk is whatever the person who put the file there chose.
+    // The name the tool was built with survives a rename.
+    let built_as = version.as_ref().and_then(|v| v.string("OriginalFilename")).map(|n| original_name(&n));
+    let lolbin = policy::is_lolbin(&file_name) || built_as.as_deref().is_some_and(policy::is_lolbin);
+
+    // Applies wherever the file lies: a copy in a user folder is the same tool.
+    let category = if lolbin {
         Category::Lolbin
+    } else if !protected {
+        Category::UserSpace
     } else if in_windows {
         Category::System
     } else {
@@ -132,32 +139,46 @@ pub fn identity(path: &str, sig: &Signature) -> Option<String> {
 // Version resource (FileDescription / ProductName)
 // ---------------------------------------------------------------------------
 
-fn display_name(path: &str) -> Option<String> {
-    let w = wide(path);
-    unsafe {
-        let size = GetFileVersionInfoSizeW(PCWSTR(w.as_ptr()), None);
-        if size == 0 {
-            return None;
-        }
-        let mut data = vec![0u8; size as usize];
-        GetFileVersionInfoW(PCWSTR(w.as_ptr()), None, size, data.as_mut_ptr() as *mut _).ok()?;
+/// The version resource of a file and the languages it is available in.
+struct VersionInfo {
+    data: Vec<u8>,
+    langs: Vec<(u16, u16)>,
+}
 
+impl VersionInfo {
+    fn load(path: &str) -> Option<Self> {
+        let w = wide(path);
+        unsafe {
+            let size = GetFileVersionInfoSizeW(PCWSTR(w.as_ptr()), None);
+            if size == 0 {
+                return None;
+            }
+            let mut data = vec![0u8; size as usize];
+            GetFileVersionInfoW(PCWSTR(w.as_ptr()), None, size, data.as_mut_ptr() as *mut _).ok()?;
+
+            let mut ptr: *mut core::ffi::c_void = std::ptr::null_mut();
+            let mut len = 0u32;
+            let q = wide(r"\VarFileInfo\Translation");
+            let mut langs: Vec<(u16, u16)> = Vec::new();
+            if VerQueryValueW(data.as_ptr() as *const _, PCWSTR(q.as_ptr()), &mut ptr, &mut len).as_bool() && len >= 4 {
+                let pairs = std::slice::from_raw_parts(ptr as *const u16, (len / 2) as usize);
+                for c in pairs.chunks_exact(2) {
+                    langs.push((c[0], c[1]));
+                }
+            }
+            langs.extend([(0x0409, 0x04b0), (0x0409, 0x04e4), (0x0407, 0x04b0), (0x0000, 0x04b0)]);
+            Some(Self { data, langs })
+        }
+    }
+
+    /// A string such as "FileDescription", in the first language that has it.
+    fn string(&self, key: &str) -> Option<String> {
         let mut ptr: *mut core::ffi::c_void = std::ptr::null_mut();
         let mut len = 0u32;
-        let q = wide(r"\VarFileInfo\Translation");
-        let mut langs: Vec<(u16, u16)> = Vec::new();
-        if VerQueryValueW(data.as_ptr() as *const _, PCWSTR(q.as_ptr()), &mut ptr, &mut len).as_bool() && len >= 4 {
-            let pairs = std::slice::from_raw_parts(ptr as *const u16, (len / 2) as usize);
-            for c in pairs.chunks_exact(2) {
-                langs.push((c[0], c[1]));
-            }
-        }
-        langs.extend([(0x0409, 0x04b0), (0x0409, 0x04e4), (0x0407, 0x04b0), (0x0000, 0x04b0)]);
-
-        for key in ["FileDescription", "ProductName"] {
-            for (lang, cp) in &langs {
-                let q = wide(&format!(r"\StringFileInfo\{lang:04x}{cp:04x}\{key}"));
-                if VerQueryValueW(data.as_ptr() as *const _, PCWSTR(q.as_ptr()), &mut ptr, &mut len).as_bool() && len > 1 {
+        for (lang, cp) in &self.langs {
+            let q = wide(&format!(r"\StringFileInfo\{lang:04x}{cp:04x}\{key}"));
+            unsafe {
+                if VerQueryValueW(self.data.as_ptr() as *const _, PCWSTR(q.as_ptr()), &mut ptr, &mut len).as_bool() && len > 1 {
                     let s = from_wide(std::slice::from_raw_parts(ptr as *const u16, len as usize));
                     let s = s.trim().to_string();
                     if !s.is_empty() {
@@ -168,6 +189,16 @@ fn display_name(path: &str) -> Option<String> {
         }
         None
     }
+
+    fn display_name(&self) -> Option<String> {
+        self.string("FileDescription").or_else(|| self.string("ProductName"))
+    }
+}
+
+/// "PowerShell.EXE" / "Cmd.Exe.MUI" → the file name the LOLBin list knows.
+fn original_name(raw: &str) -> String {
+    let lower = raw.trim().to_lowercase();
+    lower.strip_suffix(".mui").unwrap_or(&lower).to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -352,6 +383,33 @@ fn sid_string(sid: PSID) -> Option<String> {
     }
 }
 
+/// Is the file or folder owned by SYSTEM or the Administrators group? The
+/// owner can always rewrite the permissions, whatever they currently say.
+/// `false` if the owner cannot be determined.
+pub fn owned_by_admins(path: &str) -> bool {
+    let w = wide(path);
+    unsafe {
+        let mut owner = PSID::default();
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        let r = GetNamedSecurityInfoW(
+            PCWSTR(w.as_ptr()),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            Some(&mut owner),
+            None,
+            None,
+            None,
+            &mut sd,
+        );
+        if r.0 != 0 {
+            return false;
+        }
+        let ok = sid_string(owner).is_some_and(|s| s == "S-1-5-18" || s == "S-1-5-32-544");
+        let _ = LocalFree(Some(HLOCAL(sd.0)));
+        ok
+    }
+}
+
 fn is_trusted_sid(sid: PSID) -> bool {
     sid_string(sid).is_some_and(|s| TRUSTED_SIDS.contains(&s.as_str()))
 }
@@ -412,6 +470,30 @@ mod tests {
         assert_eq!(location_hint(r"c:\users\a\appdata\local\temp\x.exe"), Some(Location::Temp));
         assert_eq!(location_hint(r"c:\users\a\appdata\local\discord\app.exe"), Some(Location::AppData));
         assert_eq!(location_hint(r"c:\program files\x\x.exe"), Some(Location::ProgramFiles));
+    }
+
+    #[test]
+    fn original_names_match_the_lolbin_list() {
+        assert_eq!(original_name("PowerShell.EXE"), "powershell.exe");
+        assert_eq!(original_name(" Cmd.Exe.MUI "), "cmd.exe");
+        assert!(policy::is_lolbin(&original_name("PowerShell.EXE")));
+    }
+
+    /// A system tool copied to a user folder under another name must not be
+    /// mistaken for an ordinary signed app.
+    #[test]
+    fn renamed_copy_of_powershell_is_still_a_lolbin() {
+        let win = windows_dir();
+        let ps = format!(r"{win}\system32\windowspowershell\v1.0\powershell.exe");
+        if !std::path::Path::new(&ps).exists() {
+            return;
+        }
+        let copy = std::env::temp_dir().join("briqwall-test-updater.exe");
+        std::fs::copy(&ps, &copy).unwrap();
+        let f = gather(copy.to_str().unwrap(), &win);
+        std::fs::remove_file(&copy).ok();
+        assert!(!f.protected);
+        assert_eq!(f.category, Category::Lolbin);
     }
 
     // These touch the real file system of the machine running the tests.

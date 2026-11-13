@@ -97,6 +97,10 @@ export const de: Dict = {
   "reason.UnknownPublisher": "Signiert von „{publisher}“, liegt aber in einem Benutzerordner und ist Briqwall noch nicht bekannt.",
   "reason.Unsigned":
     "Nicht signiert und in einem Ordner, in den jedes Programm schreiben kann – so verbreitet sich typischerweise Schadsoftware.",
+  "reason.MisplacedSystemFile":
+    "Eine Windows-Systemdatei außerhalb des Windows-Ordners, an einem Ort, an den jedes Programm schreiben kann. Kopierte und umbenannte Systemwerkzeuge sind eine verbreitete Tarnung.",
+  "reason.RiskyLocation":
+    "Signiert vom bekannten Herausgeber „{publisher}“, aber aus einem Ordner für Downloads oder temporäre Dateien gestartet, in dem jedes Programm Dateien danebenlegen kann.",
 
   // Signaturen
   "sig.catalog": "Katalog",

@@ -80,20 +80,126 @@ pub fn migrate_legacy(dir: &Path, elevated: bool) {
     } else {
         std::env::var_os("LOCALAPPDATA").map(PathBuf::from).map(|b| b.join("xWall-dev"))
     };
-    let Some(old_state) = legacy.map(|d| d.join("state.json")).filter(|p| p.exists()) else { return };
+    let Some(old_dir) = legacy else { return };
+    let old_state = old_dir.join("state.json");
+    if !old_state.exists() {
+        return;
+    }
+    // Any user may create folders in ProgramData. Rules are only adopted from
+    // a folder the old service set up itself – otherwise a program could plant
+    // a "previous installation" that switches the firewall off.
+    if elevated && (is_reparse_point(&old_dir) || is_reparse_point(&old_state) || !crate::trust::is_protected(&old_state.to_string_lossy())) {
+        log::warn!("{} ist nicht vor Änderungen durch Benutzer geschützt – Regeln werden nicht übernommen", old_state.display());
+        return;
+    }
     match std::fs::copy(&old_state, &new_state) {
         Ok(_) => log::info!("Regeln aus {} übernommen", old_state.display()),
         Err(e) => log::warn!("Übernahme von {} fehlgeschlagen: {e}", old_state.display()),
     }
 }
 
-pub fn prepare_dir(dir: &Path, protect: bool) -> Result<()> {
-    std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
-    if protect {
-        // SYSTEM + Administrators full control, Users read; not inherited from ProgramData.
-        set_sddl(dir, "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)")?;
+/// SYSTEM + Administrators full control, Users read; not inherited from ProgramData.
+const DIR_SDDL: &str = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)";
+
+/// Create the data directory, or make sure an existing one can be trusted.
+///
+/// Any user may create folders in ProgramData, so a folder that is already
+/// there proves nothing: whoever created it owns it and can rewrite its
+/// permissions at any time, could have filled it with a policy of their own,
+/// or made it a link to somewhere else. Such a folder (or file in it) is moved
+/// aside and replaced. Returns notes for the log, which is opened afterwards.
+pub fn prepare_dir(dir: &Path, protect: bool) -> Result<Vec<String>> {
+    let mut notes = Vec::new();
+    if !protect {
+        std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+        return Ok(notes);
     }
-    Ok(())
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    if create_protected(dir)? {
+        return Ok(notes);
+    }
+
+    if !dir.is_dir() || !is_trusted(dir) {
+        let aside = move_aside(dir)?;
+        notes.push(format!(
+            "{} gehörte nicht SYSTEM/Administratoren oder war eine Verknüpfung – verschoben nach {}, Ordner neu angelegt",
+            dir.display(),
+            aside.display()
+        ));
+        if !create_protected(dir)? {
+            anyhow::bail!("{} wurde von einem anderen Prozess erneut angelegt", dir.display());
+        }
+        return Ok(notes);
+    }
+
+    set_sddl(dir, DIR_SDDL)?;
+    // Files put there before the folder was protected keep their own owner
+    // and permissions; the service must neither read nor write through them.
+    for entry in std::fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))?.flatten() {
+        let path = entry.path();
+        if entry.file_name().to_string_lossy().contains(ASIDE_MARK) || is_trusted(&path) {
+            continue;
+        }
+        let aside = move_aside(&path)?;
+        notes.push(format!(
+            "{} gehörte nicht SYSTEM/Administratoren oder war eine Verknüpfung – verschoben nach {}",
+            path.display(),
+            aside.display()
+        ));
+    }
+    Ok(notes)
+}
+
+const ASIDE_MARK: &str = ".untrusted-";
+
+/// Create `dir` with the protected DACL in one step, so there is no moment in
+/// which it has the permissive permissions inherited from ProgramData.
+/// `Ok(false)` if it already exists.
+fn create_protected(dir: &Path) -> Result<bool> {
+    use windows::Win32::Foundation::ERROR_ALREADY_EXISTS;
+    use windows::Win32::Security::SECURITY_ATTRIBUTES;
+    use windows::Win32::Storage::FileSystem::CreateDirectoryW;
+    let sddl = wide(DIR_SDDL);
+    let path = wide(&dir.to_string_lossy());
+    unsafe {
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(sddl.as_ptr()), SDDL_REVISION_1, &mut sd, None)?;
+        let sa = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: sd.0,
+            bInheritHandle: false.into(),
+        };
+        let res = CreateDirectoryW(PCWSTR(path.as_ptr()), Some(&sa));
+        let _ = LocalFree(Some(HLOCAL(sd.0)));
+        match res {
+            Ok(()) => Ok(true),
+            Err(e) if e.code() == ERROR_ALREADY_EXISTS.to_hresult() => Ok(false),
+            Err(e) => Err(e).with_context(|| format!("create {}", dir.display())),
+        }
+    }
+}
+
+fn is_reparse_point(path: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    // Unreadable counts as "do not follow".
+    std::fs::symlink_metadata(path).map(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0).unwrap_or(true)
+}
+
+/// A real file or folder (no link) that SYSTEM or the Administrators own.
+fn is_trusted(path: &Path) -> bool {
+    !is_reparse_point(path) && crate::trust::owned_by_admins(&path.to_string_lossy())
+}
+
+/// Rename out of the way (nothing is deleted, an administrator can inspect it).
+fn move_aside(path: &Path) -> Result<PathBuf> {
+    let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    name.push(format!("{ASIDE_MARK}{}", briqwall_common::now_secs()));
+    let aside = path.with_file_name(name);
+    std::fs::rename(path, &aside).with_context(|| format!("move {} aside", path.display()))?;
+    Ok(aside)
 }
 
 fn set_sddl(path: &Path, sddl: &str) -> Result<()> {
@@ -186,5 +292,41 @@ pub fn init_logging(dir: &Path, echo: bool) {
     let logger = Box::new(FileLogger { file: std::sync::Mutex::new(file), echo });
     if log::set_boxed_logger(logger).is_ok() {
         log::set_max_level(log::LevelFilter::Debug);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A data folder that someone else created beforehand – with a policy of
+    /// their own inside – must not be used as it is.
+    #[test]
+    fn foreign_data_dir_is_replaced() {
+        let base = std::env::temp_dir().join(format!("briqwall-dirtest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = base.join("data");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("state.json"), b"{}").unwrap();
+        // Run as a normal user the folder is ours, not the administrators'.
+        // Elevated (CI), everything we create belongs to the administrators.
+        let foreign = !crate::trust::owned_by_admins(&dir.to_string_lossy());
+
+        let notes = prepare_dir(&dir, true).unwrap();
+        let aside = std::fs::read_dir(&base).unwrap().flatten().any(|e| e.file_name().to_string_lossy().contains(ASIDE_MARK));
+        if foreign {
+            assert_eq!(notes.len(), 1, "{notes:?}");
+            assert!(aside, "the foreign folder is kept for inspection");
+            assert!(dir.is_dir() && !dir.join("state.json").exists(), "a planted policy must not be read");
+        } else {
+            assert!(notes.is_empty(), "{notes:?}");
+            assert!(!aside && dir.join("state.json").exists());
+        }
+        // A second start finds the folder as it left it.
+        if !foreign {
+            assert!(prepare_dir(&dir, true).unwrap().is_empty());
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

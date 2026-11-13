@@ -206,8 +206,9 @@ pub fn ensure_audit_policy() -> bool {
     // Filtering Platform Connection, Filtering Platform Packet Drop
     const SUBCATS: [&str; 2] = ["{0CCE9226-69AE-11D9-BED3-505054503030}", "{0CCE9225-69AE-11D9-BED3-505054503030}"];
     let mut changed = false;
+    let auditpol = auditpol_exe();
     for sc in SUBCATS {
-        let cur = std::process::Command::new("auditpol.exe")
+        let cur = std::process::Command::new(&auditpol)
             .args(["/get", &format!("/subcategory:{sc}"), "/r"])
             .output();
         let enabled = cur
@@ -219,7 +220,7 @@ pub fn ensure_audit_policy() -> bool {
             })
             .unwrap_or(false);
         if !enabled {
-            let ok = std::process::Command::new("auditpol.exe")
+            let ok = std::process::Command::new(&auditpol)
                 .args(["/set", &format!("/subcategory:{sc}"), "/failure:enable"])
                 .status()
                 .map(|s| s.success())
@@ -231,9 +232,16 @@ pub fn ensure_audit_policy() -> bool {
     changed
 }
 
+/// Full path of auditpol.exe. A bare name would be looked up next to our own
+/// executable first – and the service runs as SYSTEM.
+fn auditpol_exe() -> String {
+    format!("{}\\system32\\auditpol.exe", crate::trust::windows_dir())
+}
+
 pub fn revert_audit_policy() {
+    let auditpol = auditpol_exe();
     for sc in ["{0CCE9226-69AE-11D9-BED3-505054503030}", "{0CCE9225-69AE-11D9-BED3-505054503030}"] {
-        let _ = std::process::Command::new("auditpol.exe")
+        let _ = std::process::Command::new(&auditpol)
             .args(["/set", &format!("/subcategory:{sc}"), "/failure:disable"])
             .status();
     }

@@ -143,6 +143,8 @@ pub fn run_elevated(file: &str, params: &str) -> ElevationResult {
         let _ = CloseHandle(info.hProcess);
         match code {
             0 => ElevationResult::Applied,
+            // "No" in the helper's own confirmation dialog.
+            4 => ElevationResult::Cancelled,
             3 => ElevationResult::Failed(t("Der Dienst hat die Änderung abgelehnt.", "The service rejected the change.").into()),
             _ => ElevationResult::Failed(t("Der Dienst ist nicht erreichbar.", "The service is not reachable.").into()),
         }

@@ -24,6 +24,8 @@ export type Reason =
   | "InstalledUnsignedStrict"
   | "InvalidSignature"
   | "Unsigned"
+  | "MisplacedSystemFile"
+  | { RiskyLocation: string }
   | { InstalledSigned: string }
   | { LearnedPublisher: string }
   | { KnownPublisher: string }
