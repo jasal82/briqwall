@@ -23,9 +23,13 @@
   const rows = $derived.by(() => {
     const q = query.trim().toLowerCase();
     const locale = i18n.locale;
+    // What is open stays in the list even if a filter would hide it: it is
+    // what the user is looking at, and a freshly added program lands there.
+    const open = (a: AppInfo) => a.key === selected;
     return store.apps
-      .filter((a) => showSystem || isUserFacing(a))
+      .filter((a) => open(a) || showSystem || isUserFacing(a))
       .filter((a) => {
+        if (open(a)) return true;
         switch (filter) {
           case "allowed":
             return a.effective_out === "Allow" || a.effective_out === "Lan";
@@ -37,12 +41,13 @@
             return true;
         }
       })
-      .filter((a) => !q || a.name.toLowerCase().includes(q) || a.key.includes(q))
+      .filter((a) => open(a) || !q || a.name.toLowerCase().includes(q) || a.key.includes(q))
       .sort(
         (a, b) => Number(b.pending) - Number(a.pending) || a.name.localeCompare(b.name, locale, { numeric: true, sensitivity: "base" }),
       );
   });
 
+  const selectedExists = $derived(selected !== null && store.apps.some((a) => a.key === selected));
   const hiddenSystem = $derived(showSystem ? 0 : store.apps.filter((a) => !isUserFacing(a)).length);
   const first = $derived(Math.max(0, Math.floor(scrollTop / ROW) - 6));
   const last = $derived(Math.min(rows.length, Math.ceil((scrollTop + viewport) / ROW) + 6));
@@ -53,6 +58,24 @@
     ro.observe(list);
     return () => ro.disconnect();
   });
+
+  let scrollTo = $state<string | null>(null);
+
+  // Bring a freshly added program into view once the service delivers it.
+  $effect(() => {
+    if (scrollTo === null) return;
+    const i = rows.findIndex((a) => a.key === scrollTo);
+    if (i < 0) return;
+    if (list) list.scrollTop = Math.max(0, i * ROW - list.clientHeight / 2);
+    scrollTo = null;
+  });
+
+  async function addProgram() {
+    const key = await store.addProgram();
+    if (key === null) return;
+    selected = key;
+    scrollTo = key;
+  }
 
   // Reset scroll position when the result set changes shape.
   $effect(() => {
@@ -84,6 +107,8 @@
 <section class="page fill">
   <div class="page-head">
     <div><h1>{t("nav.apps")}</h1><p>{t("apps.intro")}</p></div>
+    <span class="sp"></span>
+    <button class="btn primary" onclick={addProgram} disabled={store.busy > 0} title={t("apps.add.tip")}><Icon name="plus" />{t("apps.add")}</button>
   </div>
   <div class="toolbar">
     <label class="search">
@@ -124,7 +149,10 @@
               <div class="appcell">
                 <Avatar name={a.name} small />
                 <div class="t">
-                  <b class="ellipsis" title={a.name}>{a.name}</b>
+                  <div class="name-row">
+                    <b class="ellipsis" title={a.name}>{a.name}</b>
+                    {#if a.rule}<span class="tag-rule" title={t("apps.customRule")}>{t("apps.rule")}</span>{/if}
+                  </div>
                   <div class="faint ellipsis" title={a.path}>{folderOf(a.path)}</div>
                 </div>
               </div>

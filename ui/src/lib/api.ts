@@ -2,12 +2,14 @@
 // a mock backend with realistic data is used, so the UI can be developed and
 // reviewed without the service.
 
-import type { ActionResult, AppInfo, ConnState, Request, Snapshot, UiPrefs, XEvent } from "./types";
+import type { ActionResult, AddResult, AppInfo, ConnState, Request, Snapshot, UiPrefs, XEvent } from "./types";
 import { createMock } from "./mock";
 
 export interface Backend {
   snapshot(): Promise<Snapshot>;
   send(reqs: Request[]): Promise<ActionResult>;
+  /** Open the file dialog and take the chosen program into the list. */
+  addProgram(): Promise<AddResult>;
   helloSupported(): Promise<boolean>;
   helloEnroll(): Promise<ActionResult>;
   helloRemove(): Promise<ActionResult>;
@@ -30,6 +32,7 @@ async function tauriBackend(): Promise<Backend> {
   return {
     snapshot: () => invoke<Snapshot>("snapshot"),
     send: (reqs) => invoke<ActionResult>("send_requests", { reqs }),
+    addProgram: () => invoke<AddResult>("add_program"),
     helloSupported: () => invoke<boolean>("hello_supported"),
     helloEnroll: () => invoke<ActionResult>("hello_enroll"),
     helloRemove: () => invoke<ActionResult>("hello_remove"),

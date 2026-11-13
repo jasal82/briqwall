@@ -145,6 +145,7 @@ export type Request =
   | { SetRule: { key: string; rule: UserRule | null } }
   | { Snooze: { key: string } }
   | { Forget: { key: string } }
+  | { AddApp: { path: string } }
   | { SetNetworkTrust: { id: string; trusted: boolean | null } }
   | { SetOptions: { lan_discovery: boolean | null; learn_publishers: boolean | null } }
   | { RemovePublisher: string }
@@ -170,6 +171,9 @@ export interface UiPrefs {
   /** What "system" resolves to. */
   system_language: "de" | "en";
 }
+
+/** Outcome of picking a program in the file dialog. */
+export type AddResult = { kind: "added"; key: string; existed: boolean } | { kind: "cancelled" } | { kind: "failed"; message: string };
 
 /** Outcome of a change request (the backend retries via UAC when needed). */
 export type ActionResult = { kind: "done" } | { kind: "cancelled" } | { kind: "failed"; message: string };

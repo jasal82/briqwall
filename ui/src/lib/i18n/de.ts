@@ -210,6 +210,10 @@ export const de: Dict = {
   "apps.col.inbound": "Eingehend",
   "apps.col.last": "Zuletzt",
   "apps.none": "Keine passenden Apps.",
+  "apps.add": "Programm hinzufügen",
+  "apps.add.tip": "Programm auswählen und entscheiden, bevor es nach Netzzugang fragt.",
+  "apps.rule": "Regel",
+  "apps.customRule": "Diese Regel haben Sie selbst gesetzt. Zum Ändern oder Entfernen die App öffnen.",
   "apps.asks": "Fragt nach",
   "apps.asks.tip": "Wird gefragt, sobald die App ins Netz möchte",
   "apps.inbound.windows": "Windows",
@@ -234,7 +238,7 @@ export const de: Dict = {
   "drawer.noAttempts": "keine Versuche",
   "drawer.attempts": "{out}× ausgehend, {in}× eingehend",
   "drawer.lastTarget": "zuletzt {remote}",
-  "drawer.reset": "Auf automatisch zurücksetzen",
+  "drawer.reset": "Eigene Regel entfernen",
   "drawer.forget": "Aus Liste entfernen",
 
   // Aktivität
@@ -338,6 +342,8 @@ export const de: Dict = {
   "toast.snoozed": "{name} ausgeblendet – bleibt blockiert",
   "toast.resetAuto": "{name}: automatisch",
   "toast.forgotten": "{name} entfernt",
+  "toast.added": "{name} hinzugefügt – Regel wählen",
+  "toast.alreadyKnown": "{name} ist bereits in der Liste",
   "toast.saved": "Einstellung gespeichert",
   "toast.followsWindows": "Folgt wieder Windows",
   "toast.publisherRemoved": "{publisher} vergessen",

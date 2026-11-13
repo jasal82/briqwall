@@ -56,6 +56,7 @@ pub fn error_text(e: &briqwall_common::ErrorCode) -> String {
     use briqwall_common::ErrorCode::*;
     match e {
         UnknownApp => t("Diese App ist nicht mehr bekannt.", "This app is no longer known.").into(),
+        NoSuchFile => t("Diese Datei gibt es nicht (mehr).", "That file does not exist (any more).").into(),
         SystemEntry => t("Systemeinträge können nicht entfernt werden.", "System entries cannot be removed.").into(),
         TooManyApprovals => t("Zu viele offene Bestätigungen.", "Too many pending confirmations.").into(),
         ApprovalExpired => {

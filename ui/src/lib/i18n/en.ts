@@ -205,6 +205,10 @@ export const en = {
   "apps.col.inbound": "Inbound",
   "apps.col.last": "Last",
   "apps.none": "No matching apps.",
+  "apps.add": "Add program",
+  "apps.add.tip": "Pick a program and decide before it asks for the network.",
+  "apps.rule": "Rule",
+  "apps.customRule": "You set this rule yourself. Open the app to change or remove it.",
   "apps.asks": "Asks first",
   "apps.asks.tip": "Briqwall will ask as soon as the app wants to go online",
   "apps.inbound.windows": "Windows",
@@ -229,7 +233,7 @@ export const en = {
   "drawer.noAttempts": "no attempts",
   "drawer.attempts": "{out}× outbound, {in}× inbound",
   "drawer.lastTarget": "last {remote}",
-  "drawer.reset": "Reset to automatic",
+  "drawer.reset": "Remove custom rule",
   "drawer.forget": "Remove from list",
 
   // activity
@@ -332,6 +336,8 @@ export const en = {
   "toast.snoozed": "{name} hidden – stays blocked",
   "toast.resetAuto": "{name}: automatic",
   "toast.forgotten": "{name} removed",
+  "toast.added": "{name} added – choose a rule",
+  "toast.alreadyKnown": "{name} is already in the list",
   "toast.saved": "Setting saved",
   "toast.followsWindows": "Follows Windows again",
   "toast.publisherRemoved": "{publisher} forgotten",

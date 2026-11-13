@@ -267,6 +267,12 @@ impl Core {
 
     /// Called for every new process and every blocked connection. Returns the app key.
     fn observe(&mut self, path: &str) -> String {
+        self.observe_inner(path, true)
+    }
+
+    /// `announce`: log an automatic allow as an event. Off when the user adds
+    /// a program by hand – nothing happened yet that is worth reporting.
+    fn observe_inner(&mut self, path: &str, announce: bool) -> String {
         let key = path.to_lowercase();
         let now = now_secs();
         if let Some(app) = self.state.apps.get_mut(&key) {
@@ -313,7 +319,7 @@ impl Core {
         };
         self.evaluate(&mut app);
         log::debug!("Neue App {} → {:?} ({:?})", app.path, app.effective_out, app.reason);
-        if app.category == Category::UserSpace && app.effective_out == Access::Allow {
+        if announce && app.category == Category::UserSpace && app.effective_out == Access::Allow {
             self.push(EventKind::AutoAllowed { key: key.clone(), name: app.name.clone(), reason: app.reason.clone() });
         }
         self.state.apps.insert(key.clone(), app);
@@ -780,6 +786,7 @@ impl Core {
                 self.changed();
                 Response::Ok
             }
+            Request::AddApp { path } => self.add_app(&path),
             Request::SetNetworkTrust { id, trusted } => {
                 let windows_trusted = self.networks.iter().find(|n| n.id == id).map(|n| n.windows_category != NetCategory::Public);
                 let resulting = trusted.or(windows_trusted).unwrap_or(false);
@@ -883,11 +890,24 @@ impl Core {
     fn run_all(&mut self, reqs: Vec<Request>, privileged: bool) -> Response {
         for r in reqs {
             match self.on_request(r, privileged) {
-                Response::Ok | Response::Status(_) | Response::Apps(_) | Response::Events(_) => {}
+                Response::Ok | Response::Status(_) | Response::Apps(_) | Response::Events(_) | Response::Added { .. } => {}
                 other => return other,
             }
         }
         Response::Ok
+    }
+
+    /// Put a program the user picked into the list. Changes nothing about what
+    /// is allowed – the entry gets the same automatic verdict it would get on
+    /// its first connection – so this needs no elevation.
+    fn add_app(&mut self, path: &str) -> Response {
+        let Some(full) = full_path(path) else { return Response::Error(ErrorCode::NoSuchFile) };
+        let existed = self.state.apps.contains_key(&full.to_lowercase());
+        let key = self.observe_inner(&full, false);
+        if !existed {
+            log::info!("Programm manuell aufgenommen: {full}");
+        }
+        Response::Added { key, existed }
     }
 
     fn set_rule(&mut self, key: &str, rule: Option<UserRule>, privileged: bool) -> Response {
@@ -947,5 +967,53 @@ impl Core {
             }
         }
         Response::Ok
+    }
+}
+
+/// Full path of an existing file, resolved the way the kernel reports it for a
+/// running process (long names, no relative parts). `None` if it is no file.
+fn full_path(path: &str) -> Option<String> {
+    let p = std::path::Path::new(path);
+    if !p.is_file() {
+        return None;
+    }
+    let full = std::fs::canonicalize(p).ok()?;
+    Some(strip_verbatim(&full.to_string_lossy()))
+}
+
+/// Remove the verbatim prefix that [`std::fs::canonicalize`] returns.
+fn strip_verbatim(s: &str) -> String {
+    const BS: char = '\\';
+    let verbatim: String = [BS, BS, '?', BS].iter().collect();
+    let unc = format!("{verbatim}UNC{BS}");
+    if let Some(rest) = s.strip_prefix(&unc) {
+        return format!("{BS}{BS}{rest}");
+    }
+    s.strip_prefix(&verbatim).unwrap_or(s).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strips_canonicalize_prefixes() {
+        let bs = '\\';
+        assert_eq!(strip_verbatim(&format!("{bs}{bs}?{bs}C:{bs}dir{bs}a.exe")), format!("C:{bs}dir{bs}a.exe"));
+        assert_eq!(strip_verbatim(&format!("{bs}{bs}?{bs}UNC{bs}srv{bs}share{bs}a.exe")), format!("{bs}{bs}srv{bs}share{bs}a.exe"));
+        assert_eq!(strip_verbatim(&format!("C:{bs}dir{bs}a.exe")), format!("C:{bs}dir{bs}a.exe"));
+    }
+
+    #[test]
+    fn full_path_resolves_file_and_rejects_others() {
+        let exe = std::env::current_exe().expect("current exe");
+        let dir = exe.parent().expect("parent dir");
+        // A detour through the parent directory must lead back to the same path.
+        let detour = dir.join("..").join(dir.file_name().unwrap()).join(exe.file_name().unwrap());
+        let resolved = full_path(&exe.to_string_lossy()).expect("own exe is a file");
+        assert!(!resolved.starts_with('\\'), "no verbatim prefix: {resolved}");
+        assert_eq!(full_path(&detour.to_string_lossy()), Some(resolved));
+        assert!(full_path(&dir.to_string_lossy()).is_none(), "a directory is no program");
+        assert!(full_path(&format!("{}{}no-such-file.exe", dir.display(), '\\')).is_none());
     }
 }

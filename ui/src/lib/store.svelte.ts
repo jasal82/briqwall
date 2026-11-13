@@ -1,6 +1,6 @@
 import { backendPromise, isMock, type Backend } from "./api";
 import { i18n, t, type LangPref } from "./i18n/index.svelte";
-import type { ActionResult, AppInfo, Request, Status, UiPrefs, XEvent } from "./types";
+import type { ActionResult, AddResult, AppInfo, Request, Status, UiPrefs, XEvent } from "./types";
 
 export type Page = "overview" | "inbox" | "apps" | "activity" | "settings";
 export type Theme = "system" | "light" | "dark";
@@ -144,6 +144,28 @@ class Store {
     }
   }
 
+  /**
+   * Let the user pick a program and take it into the list, so a rule can be
+   * set before it ever asks. Returns its key, or null if nothing was added.
+   */
+  async addProgram(): Promise<string | null> {
+    if (!this.#backend) return null;
+    this.busy++;
+    try {
+      const r: AddResult = await this.#backend.addProgram();
+      if (r.kind === "cancelled") return null;
+      if (r.kind === "failed") {
+        this.notify(t("toast.failed", { message: r.message }), "danger");
+        return null;
+      }
+      const name = this.apps.find((a) => a.key === r.key)?.name ?? fileName(r.key);
+      this.notify(r.existed ? t("toast.alreadyKnown", { name }) : t("toast.added", { name }), "ok");
+      return r.key;
+    } finally {
+      this.busy--;
+    }
+  }
+
   async enrollHello() {
     if (!this.#backend) return;
     this.busy++;
@@ -183,6 +205,11 @@ class Store {
     const r = await this.#backend?.installService();
     if (r?.kind === "failed") this.notify(r.message, "danger");
   }
+}
+
+/** Last path segment, used before the service has delivered the new entry. */
+function fileName(key: string): string {
+  return key.split(String.fromCharCode(92)).pop() ?? key;
 }
 
 export const store = new Store();

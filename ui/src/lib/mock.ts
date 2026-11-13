@@ -334,6 +334,13 @@ export function createMock(): Backend {
     system_language: navigator.language.toLowerCase().startsWith("de") ? "de" : "en",
   };
 
+  // Programs the "file dialog" returns in demo mode, one per click.
+  const pickable = [
+    { name: "Example Sync", path: "C:/Program Files/Example Sync/sync.exe", publisher: "Example Labs Inc." },
+    { name: "Photo Tool", path: "C:/Program Files/Photo Tool/phototool.exe", publisher: "Bright Pixel Ltd." },
+  ];
+  let picked = 0;
+
   return {
     snapshot: async (): Promise<Snapshot> => {
       recount();
@@ -344,6 +351,16 @@ export function createMock(): Backend {
       reqs.forEach(apply);
       emit();
       return { kind: "done" };
+    },
+    addProgram: async () => {
+      await new Promise((r) => setTimeout(r, 300));
+      const p = pickable[picked % pickable.length];
+      picked++;
+      const key = win(p.path).toLowerCase();
+      if (apps.some((a) => a.key === key)) return { kind: "added", key, existed: true };
+      apps = [...apps, installed(p.name, p.path, p.publisher, { first_seen: t(), last_seen: t() })];
+      emit();
+      return { kind: "added", key, existed: false };
     },
     helloSupported: async () => true,
     helloEnroll: async () => {

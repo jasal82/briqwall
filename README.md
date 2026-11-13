@@ -65,6 +65,12 @@ to *Automatic*, *Allow*, *LAN only* or *Block*, and see the reason for the
 automatic decision, the signature, the risk and recent blocked attempts. The
 list is virtualized and stays fast with hundreds of entries.
 
+**Add program** (top right) takes a program into the list before it ever asks
+for the network, so you can allow or block it up front – useful for something
+you have just installed and do not want online at all. Apps you decided about
+yourself carry a *Rule* tag; the details panel removes that rule again
+(*Remove custom rule*) and hands the app back to the automatic decision.
+
 ### Activity – what happened
 
 ![Activity](docs/screenshots/activity.png)
@@ -119,6 +125,7 @@ sense.
 | **Asymmetric rights** | Anyone may **tighten** protection instantly (block, lockdown, stricter level). **Loosening** requires proof that a human agreed: either a **Windows Hello signature** (fingerprint, face or PIN; the key lives in the TPM, the service verifies a single-use nonce plus the exact changes) or, as a fallback, a UAC prompt on the secure desktop. Several requests can be confirmed at once. Malware running as the user therefore **cannot unlock itself**, not even through the pipe. |
 | **Inbox instead of pop-up floods** | Blocked, unknown apps land in a calm “Requests” list with a plain-language reason, risk level and last target. A subtle Windows notification informs without interrupting. For high-risk apps, “Block” is the highlighted option (nudging towards the safe choice). |
 | **Process origin** | WFP net events carry no process id, but the Security audit event 5157 does. For each attempt Briqwall blocked, the service reads the command line and the parent chain of exactly that process (a cache covers short-lived processes). Command lines stay in memory only and are never written to disk. |
+| **Rules up front** | Rules are not only an answer to a request: *Apps › Add program* picks any program and sets its rule before it ever connects. The same panel removes a rule again. |
 | **Temporary permissions** | “Allow for 1 hour” – then Briqwall closes the door by itself. Ideal for PowerShell sessions or installers. |
 | **Learning publishers** | Permanently allowing a signed app also allows its updates (which often land in new, versioned folders) and other apps by the same publisher. Can be turned off; the list can be reviewed at any time. |
 | **Tamper detection** | When you allow an app, Briqwall remembers its identity (publisher or SHA-256). If the file is replaced afterwards, the permission is suspended and Briqwall asks again. |

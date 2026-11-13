@@ -41,6 +41,15 @@ pub enum ActionResult {
     Failed { message: String },
 }
 
+/// Outcome of adding a program by hand.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum AddResult {
+    Added { key: String, existed: bool },
+    Cancelled,
+    Failed { message: String },
+}
+
 pub struct Shared {
     pub snap: Mutex<Snapshot>,
     pub poke: AtomicBool,
@@ -79,6 +88,19 @@ pub fn send_many(shared: &Shared, reqs: Vec<Request>) -> ActionResult {
         Ok(Response::Error(e)) => ActionResult::Failed { message: i18n::error_text(&e) },
         Ok(_) => ActionResult::Failed { message: i18n::unexpected_response() },
         Err(e) => ActionResult::Failed { message: format!("{e:#}") },
+    };
+    shared.poke.store(true, Ordering::SeqCst);
+    r
+}
+
+/// Take a program into the list. This changes nothing about what is allowed,
+/// so it needs no confirmation; the rule itself is set afterwards as usual.
+pub fn add_app(shared: &Shared, path: &str) -> AddResult {
+    let r = match briqwall_common::ipc::call(&Request::AddApp { path: path.to_string() }) {
+        Ok(Response::Added { key, existed }) => AddResult::Added { key, existed },
+        Ok(Response::Error(e)) => AddResult::Failed { message: i18n::error_text(&e) },
+        Ok(_) => AddResult::Failed { message: i18n::unexpected_response() },
+        Err(e) => AddResult::Failed { message: format!("{e:#}") },
     };
     shared.poke.store(true, Ordering::SeqCst);
     r

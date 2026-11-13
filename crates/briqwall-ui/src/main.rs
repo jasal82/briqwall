@@ -10,9 +10,10 @@ mod backend;
 mod hello;
 mod i18n;
 mod icon;
+mod picker;
 mod platform;
 
-use backend::{ActionResult, Shared, Snapshot, EV_NAVIGATE};
+use backend::{ActionResult, AddResult, Shared, Snapshot, EV_NAVIGATE};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -54,6 +55,7 @@ fn main() {
             snapshot,
             send_request,
             send_requests,
+            add_program,
             hello_supported,
             hello_enroll,
             hello_remove,
@@ -263,6 +265,23 @@ async fn send_request(req: Request, shared: State<'_, Arc<Shared>>) -> Result<Ac
 async fn send_requests(reqs: Vec<Request>, shared: State<'_, Arc<Shared>>) -> Result<ActionResult, String> {
     let shared = shared.inner().clone();
     tauri::async_runtime::spawn_blocking(move || backend::send_many(&shared, reqs)).await.map_err(|e| e.to_string())
+}
+
+/// Pick a program and take it into the list, so a rule can be set for it
+/// before it ever asks for the network.
+#[tauri::command]
+async fn add_program(app: AppHandle, window: tauri::Window, shared: State<'_, Arc<Shared>>) -> Result<AddResult, String> {
+    let shared = shared.inner().clone();
+    let parent = window.hwnd().map(|h| h.0 as isize).unwrap_or(0);
+    // The dialog is modal to the main window, so it has to run on its thread.
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(picker::pick_executable(parent));
+    })
+    .map_err(|e| e.to_string())?;
+    let picked = tauri::async_runtime::spawn_blocking(move || rx.recv().ok().flatten()).await.map_err(|e| e.to_string())?;
+    let Some(path) = picked else { return Ok(AddResult::Cancelled) };
+    tauri::async_runtime::spawn_blocking(move || backend::add_app(&shared, &path)).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]

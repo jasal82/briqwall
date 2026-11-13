@@ -26,6 +26,7 @@
     swap: `<path ${S} d="M4 8h13l-3.5-3.5M20 16H7l3.5 3.5"/>`,
     moon: `<path ${S} d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10Z"/>`,
     refresh: `<path ${S} d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"/>`,
+    plus: `<path ${S} stroke-width="1.9" d="M12 5.5v13M5.5 12h13"/>`,
     learn: `<path ${S} d="M12 5 3 9.5 12 14l9-4.5L12 5Z"/><path ${S} d="M7 11.8v4.2c1.5 1.3 3.2 2 5 2s3.5-.7 5-2v-4.2"/>`,
   } as const;
   export type IconName = keyof typeof ICONS;

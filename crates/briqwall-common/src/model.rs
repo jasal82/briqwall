@@ -194,6 +194,8 @@ pub enum NetCategory {
 pub enum ErrorCode {
     UnknownApp,
     SystemEntry,
+    /// [`Request::AddApp`] with a path that is no readable file.
+    NoSuchFile,
     TooManyApprovals,
     ApprovalExpired,
     HelloNotEnrolled,
@@ -428,6 +430,9 @@ pub enum Request {
     /// Hide from inbox for a day, keep blocked.
     Snooze { key: String },
     Forget { key: String },
+    /// Take a program into the list although it has not asked for the network
+    /// yet, so a rule can be set for it up front.
+    AddApp { path: String },
     /// `trusted: None` = follow Windows network category again.
     SetNetworkTrust { id: String, trusted: Option<bool> },
     SetOptions { lan_discovery: Option<bool>, learn_publishers: Option<bool> },
@@ -458,6 +463,9 @@ pub enum Response {
     Error(ErrorCode),
     /// Nonce for a Windows Hello approval.
     Challenge(String),
+    /// Answer to [`Request::AddApp`]: key of the app, and whether it was
+    /// already in the list.
+    Added { key: String, existed: bool },
 }
 
 /// The exact bytes the Windows Hello key signs for an approval. Shared by UI
