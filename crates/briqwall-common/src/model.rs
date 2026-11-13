@@ -251,6 +251,32 @@ pub struct AppInfo {
     /// Raw WFP app-id blob for pseudo apps.
     #[serde(default)]
     pub raw_app_id: Option<Vec<u8>>,
+    /// Which process instances triggered recent blocked attempts (newest
+    /// first). Held in memory by the service only, never written to disk.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub origins: Vec<ProcessOrigin>,
+}
+
+/// One process instance that triggered a blocked connection: its command line
+/// and the chain of parent processes. Lets the user tell a legitimate call of a
+/// shared tool (rundll32, PowerShell, …) from an abusive one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessOrigin {
+    pub pid: u32,
+    pub command_line: Option<String>,
+    /// Parent first, then grandparent, … (at most a few levels).
+    pub parents: Vec<ParentProcess>,
+    pub last_seen: u64,
+    /// Blocked attempts from this origin (same command line and parents).
+    pub count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParentProcess {
+    pub pid: u32,
+    /// File name, e.g. "WINWORD.EXE".
+    pub name: String,
+    pub path: Option<String>,
 }
 
 impl AppInfo {

@@ -387,3 +387,22 @@ button:disabled { opacity: .55; cursor: default; }
 .hello-tip .t { flex: 1; min-width: 0; }
 .hello-tip .t b { display: block; }
 .hello-tip .ic { color: var(--accent); flex: none; }
+
+/* process origin of blocked attempts */
+.origin { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; display: grid; gap: 8px; min-width: 0; }
+.origin.compact { padding: 0; border: 0; background: none; }
+.origin .k { font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; }
+.origin-item { display: grid; gap: 6px; min-width: 0; }
+.chain { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.chain .proc { font: 500 12.5px "Cascadia Mono", Consolas, monospace; padding: 2px 7px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border); }
+.chain .proc.me { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); color: var(--accent); }
+.chain .proc.bad { border-color: color-mix(in srgb, var(--danger) 50%, var(--border)); color: var(--danger); background: var(--danger-soft); }
+.chain .sep { color: var(--text-3); }
+.cmd {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  font: 12.5px/1.5 "Cascadia Mono", Consolas, monospace; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.origin-warn { display: flex; gap: 8px; align-items: flex-start; color: var(--danger); font-weight: 500; font-size: 13px; }
+.origin-warn svg { margin-top: 2px; }
+.origin .link { justify-self: start; font-size: 13px; }

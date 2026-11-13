@@ -183,6 +183,17 @@ export const de: Dict = {
   "bulk.snoozed.one": "1 Anfrage ausgeblendet",
   "bulk.snoozed.other": "{n} Anfragen ausgeblendet",
 
+  // Prozess-Herkunft
+  "origin.title": "Ausgelöst von",
+  "origin.count.one": "1 Versuch",
+  "origin.count.other": "{n} Versuche",
+  "origin.noCmdline": "Befehlszeile nicht verfügbar (Prozess bereits beendet).",
+  "origin.more.one": "1 weiteren Aufrufer zeigen",
+  "origin.more.other": "{n} weitere Aufrufer zeigen",
+  "origin.less": "Weniger zeigen",
+  "origin.suspicious": "Gestartet von {parent} – Office-Programme und Skript-Hosts starten solche Programme normalerweise nicht. Das ist ein typisches Muster von Makro-Schadsoftware.",
+  "origin.scope": "Hinweis: Ihre Entscheidung gilt für {name} insgesamt, nicht nur für diesen Aufruf.",
+
   // Apps
   "apps.intro": "Alle Programme, die Briqwall gesehen hat, und wie es entschieden hat.",
   "apps.search": "App oder Pfad suchen",

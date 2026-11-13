@@ -13,6 +13,7 @@ mod core;
 mod hello;
 mod ipc_server;
 mod policy;
+mod procinfo;
 mod store;
 mod trust;
 mod watchers;
@@ -91,6 +92,10 @@ fn start(tx: Sender<Msg>, rx: Receiver<Msg>, echo: bool) -> Result<std::thread::
             match e.subscribe(Some(watchers::net_event_callback), ctx as *const _ as *const _) {
                 Ok(_) => log::info!("WFP-Ereignisse abonniert"),
                 Err(err) => log::warn!("Keine Verbindungs-Ereignisse: {err:#}"),
+            }
+            match watchers::subscribe_drop_audit(tx.clone()) {
+                Ok(()) => log::info!("Audit-Ereignis 5157 abonniert (Prozess-Herkunft)"),
+                Err(err) => log::warn!("Keine Prozess-Herkunft: {err:#}"),
             }
             Ok(e)
         }

@@ -42,6 +42,7 @@ wenigen Rückfragen betreffen genau die Programme, bei denen sie sinnvoll sind.
 | **LOLBin-Härtung** | PowerShell, mshta, certutil, rundll32, bitsadmin & Co. sind echt von Microsoft signiert, werden aber von Angreifern zum Nachladen von Schadcode genutzt. Sie bekommen *nicht* automatisch Netzzugang (außer im Modus „Entspannt“). |
 | **Asymmetrische Rechte** | Den Schutz **verschärfen** darf jeder sofort (blockieren, Notfall-Sperre, strengerer Modus). Den Schutz **lockern** braucht einen Nachweis, dass ein Mensch zugestimmt hat: entweder eine **Windows-Hello-Signatur** (Fingerabdruck, Gesicht oder PIN; der Schlüssel liegt im TPM, der Dienst prüft eine Einmal-Nonce plus die exakten Änderungen) oder als Rückfall eine UAC-Abfrage auf dem sicheren Desktop. Mehrere Anfragen lassen sich mit einer Bestätigung erledigen. Schadsoftware im Benutzerkontext kann sich so **nicht selbst freischalten**, auch nicht über die Pipe. |
 | **Inbox statt Pop-up-Flut** | Blockierte, unbekannte Apps landen in einer ruhigen „Anfragen“-Liste mit Klartext-Begründung, Risikostufe und letztem Verbindungsziel. Eine dezente Windows-Benachrichtigung informiert, unterbricht aber nicht. Bei hohem Risiko ist „Blockieren“ die hervorgehobene Option (Nudging zur sicheren Wahl). |
+| **Prozess-Herkunft** | Gemeinsam genutzte Werkzeuge wie `rundll32.exe` oder PowerShell verwenden Windows und Angreifer gleichermaßen. Deshalb zeigt jede Anfrage, **welche Prozessinstanz** den Versuch ausgelöst hat: Kette der Elternprozesse und vollständige **Befehlszeile** (bei rundll32 also DLL und Funktion). Startet ein Office-Programm, PDF-Reader oder Skript-Host das Werkzeug – ein klassisches Makro-Malware-Muster –, warnt Briqwall deutlich und stuft das Risiko hoch. Technisch: WFP-Ereignisse enthalten keine Prozess-ID, das Sicherheitsereignis 5157 schon; ein Cache deckt kurzlebige Prozesse ab. Befehlszeilen bleiben nur im Arbeitsspeicher. |
 | **Befristete Freigaben** | „1 Stunde erlauben“ – danach schließt Briqwall die Tür von selbst. Ideal für PowerShell-Sitzungen oder Installer. |
 | **Herausgeber lernen** | Wer eine signierte App dauerhaft erlaubt, erlaubt damit auch ihre Updates (die oft in neuen, versionierten Ordnern landen) und andere Apps desselben Herausgebers. Abschaltbar, Liste jederzeit einsehbar. |
 | **Manipulationserkennung** | Beim Erlauben merkt sich Briqwall die Identität (Herausgeber bzw. SHA-256). Wird die Datei danach ausgetauscht, wird die Freigabe ausgesetzt und erneut gefragt. |
@@ -255,6 +256,7 @@ crates/
     ipc_server.rs Abgesicherte Named Pipe
     store.rs      Persistenz (atomar), geschütztes Datenverzeichnis, Logging
     hello.rs      Prüfung von Windows-Hello-Signaturen (mit Tests)
+    procinfo.rs   Befehlszeile und Elternkette blockierter Prozesse
   briqwall-ui/       Tauri-Hülle: Commands, Events, Tray, Toasts, Hello, Elevation
     installer/    NSIS-Hooks (Dienst einrichten/entfernen, Migration) und Branding
 ui/               Oberfläche (Svelte 5 + TypeScript + Vite)

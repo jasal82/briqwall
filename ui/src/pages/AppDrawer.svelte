@@ -2,6 +2,7 @@
   import Icon from "../lib/Icon.svelte";
   import Avatar from "../lib/Avatar.svelte";
   import Seg from "../lib/Seg.svelte";
+  import OriginInfo from "../lib/OriginInfo.svelte";
   import { store } from "../lib/store.svelte";
   import { accessLabel, ago, categoryLabel, dateTime, now, reasonText, riskLabel, riskTone, ruleLabel, signatureText } from "../lib/format";
   import { q, t } from "../lib/i18n/index.svelte";
@@ -67,6 +68,7 @@
           <Seg label={t("drawer.inbound")} {options} value={app.rule?.inbound ?? "Auto"} onchange={(v) => setRule(app, "inbound", v)} />
           <span class="faint">{t("drawer.auto", { verdict: accessLabel(app.auto_in).toLowerCase() })}</span>
         </div>
+        <OriginInfo {app} />
         <dl class="kv">
           <dt>{t("drawer.path")}</dt><dd class="selectable">{app.path}</dd>
           <dt>{t("drawer.origin")}</dt>

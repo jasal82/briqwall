@@ -32,25 +32,36 @@ pub fn spawn_process_watcher(tx: Sender<Msg>) {
         .spawn(move || {
             let mut known: HashSet<u32> = HashSet::new();
             loop {
+                let procs = list_processes();
                 let mut current = HashSet::with_capacity(known.len() + 16);
-                for pid in list_pids() {
-                    current.insert(pid);
-                    if !known.contains(&pid) {
-                        if let Some(path) = process_path(pid) {
+                for (pid, ppid, exe) in &procs {
+                    current.insert(*pid);
+                    if !known.contains(pid) {
+                        // Remember command line and parent while the process
+                        // still exists (short-lived tools exit quickly).
+                        crate::procinfo::remember(*pid, *ppid, exe.clone());
+                        if let Some(path) = process_path(*pid) {
                             if tx.send(Msg::Process { path }).is_err() {
                                 return;
                             }
                         }
                     }
                 }
+                let pids: Vec<u32> = procs.iter().map(|p| p.0).collect();
+                crate::procinfo::touch_running(&pids);
                 known = current;
-                std::thread::sleep(Duration::from_millis(250));
+                std::thread::sleep(Duration::from_millis(200));
             }
         })
         .expect("spawn procwatch");
 }
 
 pub fn list_pids() -> Vec<u32> {
+    list_processes().into_iter().map(|p| p.0).collect()
+}
+
+/// (pid, parent pid, exe file name) of all processes except Idle/System.
+pub fn list_processes() -> Vec<(u32, u32, String)> {
     let mut out = Vec::new();
     unsafe {
         let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else { return out };
@@ -58,7 +69,7 @@ pub fn list_pids() -> Vec<u32> {
         if Process32FirstW(snap, &mut pe).is_ok() {
             loop {
                 if pe.th32ProcessID > 4 {
-                    out.push(pe.th32ProcessID);
+                    out.push((pe.th32ProcessID, pe.th32ParentProcessID, from_wide(&pe.szExeFile)));
                 }
                 if Process32NextW(snap, &mut pe).is_err() {
                     break;
@@ -316,5 +327,174 @@ impl Coalescer {
                 true
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Security audit 5157: process id of a blocked connection
+// ---------------------------------------------------------------------------
+
+/// Fields of a "WFP blocked a connection" audit event.
+#[derive(Debug, PartialEq)]
+pub struct DropAudit {
+    pub pid: u32,
+    /// NT device path of the application.
+    pub app: String,
+    pub filter_id: u64,
+}
+
+/// Ids of Briqwall's blocking filters (kept current by the core). Drops by
+/// other filters – Windows Firewall, other security software – are ignored
+/// before any process is inspected.
+fn block_filters() -> &'static std::sync::RwLock<HashSet<u64>> {
+    static F: std::sync::OnceLock<std::sync::RwLock<HashSet<u64>>> = std::sync::OnceLock::new();
+    F.get_or_init(|| std::sync::RwLock::new(HashSet::new()))
+}
+
+pub fn set_block_filters(ids: impl Iterator<Item = u64>) {
+    *block_filters().write().unwrap() = ids.collect();
+}
+
+struct AuditCtx {
+    tx: Sender<Msg>,
+    devmap: std::sync::Mutex<DevMap>,
+}
+
+/// Subscribe to event 5157 in the Security log. Windows writes it because the
+/// service enables failure auditing for "Filtering Platform Connection".
+pub fn subscribe_drop_audit(tx: Sender<Msg>) -> anyhow::Result<()> {
+    use windows::Win32::System::EventLog::{EvtSubscribe, EvtSubscribeToFutureEvents};
+    let mut devmap = DevMap::default();
+    devmap.refresh();
+    // Leaked on purpose: lives as long as the subscription (= the process).
+    let ctx: &'static AuditCtx = Box::leak(Box::new(AuditCtx { tx, devmap: std::sync::Mutex::new(devmap) }));
+    let channel = wide("Security");
+    let query = wide("*[System[(EventID=5157)]]");
+    unsafe {
+        EvtSubscribe(
+            None,
+            None,
+            PCWSTR(channel.as_ptr()),
+            PCWSTR(query.as_ptr()),
+            None,
+            Some(ctx as *const AuditCtx as *const core::ffi::c_void),
+            Some(audit_callback),
+            EvtSubscribeToFutureEvents.0,
+        )?;
+    }
+    Ok(())
+}
+
+unsafe extern "system" fn audit_callback(
+    action: windows::Win32::System::EventLog::EVT_SUBSCRIBE_NOTIFY_ACTION,
+    ctx: *const core::ffi::c_void,
+    event: windows::Win32::System::EventLog::EVT_HANDLE,
+) -> u32 {
+    use windows::Win32::System::EventLog::EvtSubscribeActionDeliver;
+    if action != EvtSubscribeActionDeliver || ctx.is_null() {
+        return 0;
+    }
+    let ctx = &*(ctx as *const AuditCtx);
+    let Some(xml) = render_xml(event) else {
+        log::warn!("Audit 5157: Ereignis nicht darstellbar");
+        return 0;
+    };
+    let Some(audit) = parse_drop_audit(&xml) else {
+        // Log the format once so a mismatch can be diagnosed.
+        static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !LOGGED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            log::warn!("Audit 5157 nicht lesbar: {}", xml.chars().take(800).collect::<String>());
+        }
+        return 0;
+    };
+    if !block_filters().read().unwrap().contains(&audit.filter_id) {
+        return 0; // blocked by someone else
+    }
+    let path = ctx.devmap.lock().unwrap().to_dos(&audit.app);
+    match crate::procinfo::origin(audit.pid, path.as_deref()) {
+        Some(origin) => {
+            let _ = ctx.tx.send(Msg::Origin { filter_id: audit.filter_id, path, origin });
+        }
+        None => log::debug!("Herkunft PID {} ({:?}) nicht ermittelbar", audit.pid, path),
+    }
+    0
+}
+
+unsafe fn render_xml(event: windows::Win32::System::EventLog::EVT_HANDLE) -> Option<String> {
+    use windows::Win32::System::EventLog::{EvtRender, EvtRenderEventXml};
+    let (mut used, mut props) = (0u32, 0u32);
+    let _ = EvtRender(None, event, EvtRenderEventXml.0, 0, None, &mut used, &mut props);
+    if used == 0 {
+        return None;
+    }
+    let mut buf = vec![0u16; (used as usize).div_ceil(2) + 1];
+    EvtRender(
+        None,
+        event,
+        EvtRenderEventXml.0,
+        (buf.len() * 2) as u32,
+        Some(buf.as_mut_ptr() as *mut _),
+        &mut used,
+        &mut props,
+    )
+    .ok()?;
+    Some(from_wide(&buf))
+}
+
+/// Value of `<Data Name='…'>value</Data>`. EvtRender uses single quotes for
+/// attributes; double quotes are accepted as well.
+fn xml_data<'a>(xml: &'a str, name: &str) -> Option<&'a str> {
+    let start = ['\'', '"'].iter().find_map(|q| {
+        let open = format!("Name={q}{name}{q}>");
+        xml.find(&open).map(|i| i + open.len())
+    })?;
+    let end = xml[start..].find("</Data>")? + start;
+    Some(&xml[start..end])
+}
+
+fn xml_unescape(s: &str) -> String {
+    s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
+}
+
+pub fn parse_drop_audit(xml: &str) -> Option<DropAudit> {
+    Some(DropAudit {
+        pid: xml_data(xml, "ProcessID")?.trim().parse().ok()?,
+        app: xml_unescape(xml_data(xml, "Application")?.trim()),
+        filter_id: xml_data(xml, "FilterRTID")?.trim().parse().ok()?,
+    })
+}
+
+#[cfg(test)]
+mod audit_tests {
+    use super::*;
+
+    #[test]
+    fn parses_5157_event() {
+        let bs = std::char::from_u32(0x5c).unwrap();
+        let app = format!("{bs}device{bs}harddiskvolume3{bs}windows{bs}system32{bs}rundll32.exe");
+        let xml = format!(
+            "<Event><System><EventID>5157</EventID></System><EventData>\
+             <Data Name=\"ProcessID\">4711</Data>\
+             <Data Name=\"Application\">{app}</Data>\
+             <Data Name=\"Direction\">%%14593</Data>\
+             <Data Name=\"DestAddress\">93.184.216.34</Data>\
+             <Data Name=\"DestPort\">443</Data>\
+             <Data Name=\"FilterRTID\">123456</Data>\
+             </EventData></Event>"
+        );
+        let a = parse_drop_audit(&xml).expect("parsed");
+        assert_eq!(a, DropAudit { pid: 4711, app: app.clone(), filter_id: 123456 });
+        assert!(parse_drop_audit("<Event/>").is_none());
+
+        // The format EvtRender actually produces: single-quoted attributes,
+        // namespace on <Event>, everything on one line.
+        let real = format!(
+            "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System>\
+             <Provider Name='Microsoft-Windows-Security-Auditing'/><EventID>5157</EventID></System>\
+             <EventData><Data Name='ProcessID'>9412</Data><Data Name='Application'>{app}</Data>\
+             <Data Name='Direction'>%%14593</Data><Data Name='FilterRTID'>70321</Data>\
+             <Data Name='LayerName'>%%14611</Data><Data Name='LayerRTID'>48</Data></EventData></Event>"
+        );
+        assert_eq!(parse_drop_audit(&real), Some(DropAudit { pid: 9412, app, filter_id: 70321 }));
     }
 }

@@ -82,6 +82,52 @@ function sampleApps(): AppInfo[] {
       blocked_count: 2,
       last_blocked: t() - 360,
       last_remote: "104.20.23.154:443 (HTTPS)",
+      origins: [
+        {
+          pid: 6604,
+          command_line: "curl -sSL https://example.com/install.sh -o install.sh",
+          parents: [
+            { pid: 6012, name: "bash.exe", path: win("C:/Program Files/Git/usr/bin/bash.exe") },
+            { pid: 4410, name: "WindowsTerminal.exe", path: null },
+          ],
+          last_seen: t() - 360,
+          count: 2,
+        },
+      ],
+    }),
+    app({
+      name: "Windows host process (Rundll32)",
+      path: win("C:/Windows/System32/rundll32.exe"),
+      category: "Lolbin",
+      signature: catalog("Microsoft Windows"),
+      risk: "Medium",
+      reason: "Tool",
+      ...ask,
+      blocked_count: 5,
+      last_blocked: t() - 40,
+      last_remote: "45.133.1.20:443 (HTTPS)",
+      origins: [
+        {
+          pid: 9412,
+          command_line: win("rundll32.exe C:/Users/alex/AppData/Local/Temp/upd4.dll,DllRegisterServer"),
+          parents: [
+            { pid: 8820, name: "WINWORD.EXE", path: win("C:/Program Files/Microsoft Office/root/Office16/WINWORD.EXE") },
+            { pid: 5120, name: "explorer.exe", path: win("C:/Windows/explorer.exe") },
+          ],
+          last_seen: t() - 40,
+          count: 3,
+        },
+        {
+          pid: 7716,
+          command_line: win("C:/Windows/system32/rundll32.exe C:/Windows/System32/Windows.Storage.ApplicationData.dll,CleanupTemporaryState"),
+          parents: [
+            { pid: 1288, name: "svchost.exe", path: win("C:/Windows/System32/svchost.exe") },
+            { pid: 940, name: "services.exe", path: win("C:/Windows/System32/services.exe") },
+          ],
+          last_seen: t() - 1500,
+          count: 2,
+        },
+      ],
     }),
     app({
       name: "CamViewer",

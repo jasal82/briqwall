@@ -64,6 +64,23 @@ export interface AppInfo {
   pending: boolean;
   snoozed_until: number | null;
   tampered: boolean;
+  /** Process instances behind recent blocked attempts (newest first). */
+  origins?: ProcessOrigin[];
+}
+
+export interface ParentProcess {
+  pid: number;
+  name: string;
+  path: string | null;
+}
+
+export interface ProcessOrigin {
+  pid: number;
+  command_line: string | null;
+  /** Parent first, then grandparent, … */
+  parents: ParentProcess[];
+  last_seen: number;
+  count: number;
 }
 
 export interface Settings {

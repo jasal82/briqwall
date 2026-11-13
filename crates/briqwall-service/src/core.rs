@@ -18,6 +18,8 @@ use briqwall_common::*;
 pub enum Msg {
     Process { path: String },
     Net(NetEvt),
+    /// Process details of a blocked attempt (from Security audit event 5157).
+    Origin { filter_id: u64, path: Option<String>, origin: ProcessOrigin },
     Ipc { req: Request, privileged: bool, reply: Sender<Response> },
     Shutdown,
 }
@@ -53,6 +55,9 @@ pub struct Core {
     defer_apply: bool,
     /// Outstanding Windows Hello challenges (single use, short lived).
     challenges: HashMap<String, Instant>,
+    /// Recent process origins of blocked attempts per app (memory only:
+    /// command lines can contain private data and are never written to disk).
+    origins: HashMap<String, Vec<ProcessOrigin>>,
 }
 
 impl Core {
@@ -92,6 +97,7 @@ impl Core {
             last_net_check: Instant::now() - Duration::from_secs(60),
             defer_apply: true,
             challenges: HashMap::new(),
+            origins: HashMap::new(),
         };
         core.observe_pseudo("System", &wfp::system_app_id());
         // Evaluate everything that is already running *before* the first rebuild,
@@ -146,6 +152,7 @@ impl Core {
                 self.observe(&path);
             }
             Msg::Net(evt) => self.on_net_event(evt),
+            Msg::Origin { filter_id, path, origin } => self.on_origin(filter_id, path, origin),
             Msg::Ipc { req, privileged, reply } => {
                 let resp = self.on_request(req, privileged);
                 let _ = reply.send(resp);
@@ -302,6 +309,7 @@ impl Core {
             identity: None,
             file_stamp: f.stamp,
             raw_app_id: None,
+            origins: Vec::new(),
         };
         self.evaluate(&mut app);
         log::debug!("Neue App {} → {:?} ({:?})", app.path, app.effective_out, app.reason);
@@ -347,6 +355,7 @@ impl Core {
             identity: None,
             file_stamp: None,
             raw_app_id: Some(blob.to_vec()),
+            origins: Vec::new(),
         };
         self.evaluate(&mut app);
         self.state.apps.insert(key.clone(), app);
@@ -456,6 +465,47 @@ impl Core {
         }
     }
 
+    /// Tell the audit-event callback which filters are Briqwall's blocking
+    /// filters, so it only inspects processes for drops caused by Briqwall.
+    fn publish_block_filters(&self) {
+        watchers::set_block_filters(
+            self.purposes
+                .iter()
+                .filter(|(_, p)| matches!(p, Purpose::DefaultBlock(_) | Purpose::AppBlock(..) | Purpose::Lockdown(_)))
+                .map(|(id, _)| *id),
+        );
+    }
+
+    /// Remember which process instance triggered a blocked attempt. Origins
+    /// with the same command line and parents are merged.
+    fn on_origin(&mut self, filter_id: u64, path: Option<String>, origin: ProcessOrigin) {
+        const KEEP: usize = 5;
+        if !matches!(
+            self.purposes.get(&filter_id),
+            Some(Purpose::DefaultBlock(_) | Purpose::AppBlock(..) | Purpose::Lockdown(_))
+        ) {
+            return; // not blocked by Briqwall
+        }
+        let Some(key) = path.map(|p| p.to_lowercase()).filter(|k| self.state.apps.contains_key(k)) else { return };
+        let list = self.origins.entry(key).or_default();
+        let same = |o: &ProcessOrigin| {
+            o.command_line == origin.command_line
+                && o.parents.iter().map(|p| &p.name).eq(origin.parents.iter().map(|p| &p.name))
+        };
+        if let Some(i) = list.iter().position(same) {
+            let mut known = list.remove(i);
+            known.pid = origin.pid;
+            known.last_seen = origin.last_seen;
+            known.count = known.count.saturating_add(1);
+            known.parents = origin.parents;
+            list.insert(0, known);
+        } else {
+            list.insert(0, origin);
+            list.truncate(KEEP);
+        }
+        self.revision += 1;
+    }
+
     // -----------------------------------------------------------------------
     // Filters
     // -----------------------------------------------------------------------
@@ -526,6 +576,7 @@ impl Core {
                     self.purposes.insert(id, p);
                 }
                 self.app_filter_ids.insert(key.to_string(), ids);
+                self.publish_block_filters();
             }
             Err(e) => log::error!("Filter für {key} konnten nicht gesetzt werden: {e:#}"),
         }
@@ -586,6 +637,7 @@ impl Core {
                     }
                     self.app_filter_ids.insert(key, v);
                 }
+                self.publish_block_filters();
                 log::info!(
                     "Regelwerk neu aufgebaut: {total} Filter (vorher {purged}), Modus {:?}, {} ms",
                     mode,
@@ -663,7 +715,17 @@ impl Core {
     fn on_request(&mut self, req: Request, privileged: bool) -> Response {
         match req {
             Request::Status => Response::Status(Box::new(self.status(privileged))),
-            Request::Apps => Response::Apps(self.state.apps.values().cloned().collect()),
+            Request::Apps => Response::Apps(
+                self.state
+                    .apps
+                    .values()
+                    .map(|a| {
+                        let mut a = a.clone();
+                        a.origins = self.origins.get(&a.key).cloned().unwrap_or_default();
+                        a
+                    })
+                    .collect(),
+            ),
             Request::Events { after } => {
                 let v: Vec<Event> = self.events.iter().filter(|e| e.seq > after).cloned().collect();
                 let skip = v.len().saturating_sub(300);
@@ -713,6 +775,7 @@ impl Core {
                     ids.iter().for_each(|id| {
                         self.purposes.remove(id);
                     });
+                    self.publish_block_filters();
                 }
                 self.changed();
                 Response::Ok

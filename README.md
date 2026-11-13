@@ -41,6 +41,19 @@ Select several requests and decide for all of them at once. Allowing is
 confirmed with **Windows Hello** (fingerprint, face or PIN) – or with UAC if
 Hello isn't set up – so malware running as you cannot approve itself.
 
+### Who triggered it?
+
+![Request with process origin](docs/screenshots/request-origin.png)
+
+Shared tools like `rundll32.exe` or PowerShell are used by Windows itself and
+by attackers alike – the name alone doesn't tell you whether a request is
+legitimate. Briqwall therefore shows **which process instance** triggered each
+blocked attempt: the chain of parent processes and the full **command line**,
+which for rundll32 reveals the DLL and function being called. Different callers
+are listed separately. If an Office program, PDF reader or script host started
+the tool – a classic macro-malware pattern – Briqwall raises a clear warning
+and treats the request as high risk.
+
 ### Apps – every program and its rule
 
 ![Apps with details panel](docs/screenshots/apps.png)
@@ -105,6 +118,7 @@ sense.
 | **LOLBin hardening** | PowerShell, mshta, certutil, rundll32, bitsadmin & co. are genuinely signed by Microsoft, yet attackers use them to download malware. They do *not* get network access automatically (except in “Relaxed” mode). |
 | **Asymmetric rights** | Anyone may **tighten** protection instantly (block, lockdown, stricter level). **Loosening** requires proof that a human agreed: either a **Windows Hello signature** (fingerprint, face or PIN; the key lives in the TPM, the service verifies a single-use nonce plus the exact changes) or, as a fallback, a UAC prompt on the secure desktop. Several requests can be confirmed at once. Malware running as the user therefore **cannot unlock itself**, not even through the pipe. |
 | **Inbox instead of pop-up floods** | Blocked, unknown apps land in a calm “Requests” list with a plain-language reason, risk level and last target. A subtle Windows notification informs without interrupting. For high-risk apps, “Block” is the highlighted option (nudging towards the safe choice). |
+| **Process origin** | WFP net events carry no process id, but the Security audit event 5157 does. For each attempt Briqwall blocked, the service reads the command line and the parent chain of exactly that process (a cache covers short-lived processes). Command lines stay in memory only and are never written to disk. |
 | **Temporary permissions** | “Allow for 1 hour” – then Briqwall closes the door by itself. Ideal for PowerShell sessions or installers. |
 | **Learning publishers** | Permanently allowing a signed app also allows its updates (which often land in new, versioned folders) and other apps by the same publisher. Can be turned off; the list can be reviewed at any time. |
 | **Tamper detection** | When you allow an app, Briqwall remembers its identity (publisher or SHA-256). If the file is replaced afterwards, the permission is suspended and Briqwall asks again. |
@@ -323,6 +337,7 @@ crates/
     ipc_server.rs Secured named pipe
     store.rs      Persistence (atomic), protected data directory, logging
     hello.rs      Verification of Windows Hello signatures (with tests)
+    procinfo.rs   Command line and parent chain of blocking-relevant processes
     cli_text.rs   CLI texts (English / German)
   briqwall-ui/       Tauri shell: commands, events, tray, toasts, Hello, elevation, i18n
     installer/    NSIS hooks (set up/remove service, migration) and branding

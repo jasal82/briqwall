@@ -178,6 +178,17 @@ export const en = {
   "bulk.snoozed.one": "1 request hidden",
   "bulk.snoozed.other": "{n} requests hidden",
 
+  // process origin
+  "origin.title": "Triggered by",
+  "origin.count.one": "1 attempt",
+  "origin.count.other": "{n} attempts",
+  "origin.noCmdline": "Command line not available (process already exited).",
+  "origin.more.one": "Show 1 more caller",
+  "origin.more.other": "Show {n} more callers",
+  "origin.less": "Show fewer",
+  "origin.suspicious": "Started by {parent} – Office programs and script hosts normally don't start such programs. This is a typical pattern of macro malware.",
+  "origin.scope": "Note: your decision applies to {name} as a whole, not only to this call.",
+
   // apps
   "apps.intro": "Every program Briqwall has seen, and how it decided.",
   "apps.search": "Search app or path",

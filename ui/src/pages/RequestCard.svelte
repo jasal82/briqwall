@@ -2,6 +2,7 @@
   import Icon from "../lib/Icon.svelte";
   import Avatar from "../lib/Avatar.svelte";
   import SplitButton from "../lib/SplitButton.svelte";
+  import OriginInfo, { suspiciousParent } from "../lib/OriginInfo.svelte";
   import { store } from "../lib/store.svelte";
   import { ago, categoryLabel, locationLabel, now, publisher, reasonText, riskLabel, riskTone } from "../lib/format";
   import { t, tn } from "../lib/i18n/index.svelte";
@@ -12,7 +13,9 @@
   const pub = $derived(publisher(app.signature));
   const invalidSig = $derived(typeof app.signature === "object" && "Invalid" in app.signature);
   const lanTarget = $derived(isPrivate(app.last_remote));
-  const risky = $derived(app.risk === "High");
+  // A suspicious parent (Office, script host …) makes any request high risk.
+  const suspicious = $derived((app.origins ?? []).some((o) => suspiciousParent(o) !== null));
+  const risky = $derived(app.risk === "High" || suspicious);
   const lolbin = $derived(app.category === "Lolbin");
   const hintTone = $derived(
     app.location_hint && ["Downloads", "Temp", "Desktop", "Public", "Removable"].includes(app.location_hint) ? "warn" : "",
@@ -60,7 +63,8 @@
       <h3 class="ellipsis" title={app.name}>{app.name}</h3>
       <div class="faint ellipsis selectable" title={app.path}>{app.path}</div>
       <div class="req-tags">
-        <span class="badge {riskTone[app.risk]}"><Icon name={risky ? "alert" : "info"} size={12} />{riskLabel(app.risk)}</span>
+        <span class="badge {suspicious ? 'danger' : riskTone[app.risk]}"
+          ><Icon name={risky ? "alert" : "info"} size={12} />{riskLabel(suspicious ? "High" : app.risk)}</span>
         {#if pub}
           <span class="badge ok"><Icon name="check" size={12} />{t("req.signedBy", { publisher: pub })}</span>
         {:else if invalidSig}
@@ -86,6 +90,8 @@
       </span>
     {/if}
   </div>
+
+  <OriginInfo {app} />
 
   <div class="req-actions">
     {#if risky}

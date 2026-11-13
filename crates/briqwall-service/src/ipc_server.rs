@@ -155,26 +155,3 @@ fn client_is_admin(h: HANDLE) -> bool {
         ok && member.as_bool()
     }
 }
-
-#[cfg(test)]
-mod probe {
-    use super::*;
-    #[test]
-    fn pipe_create_variants() {
-        let name = wide(r"\.\pipe\briqwall-probe-test");
-        let sddl = wide(PIPE_SDDL);
-        let mut sd = PSECURITY_DESCRIPTOR::default();
-        unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(sddl.as_ptr()), SDDL_REVISION_1, &mut sd, None).unwrap() };
-        let sa = SECURITY_ATTRIBUTES { nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: sd.0, bInheritHandle: false.into() };
-        for (label, mode, sa_opt) in [
-            ("plain", PIPE_TYPE_BYTE, None),
-            ("reject", PIPE_TYPE_BYTE | PIPE_REJECT_REMOTE_CLIENTS, None),
-            ("sd", PIPE_TYPE_BYTE, Some(&sa)),
-        ] {
-            let h = unsafe { CreateNamedPipeW(PCWSTR(name.as_ptr()), PIPE_ACCESS_DUPLEX, mode, PIPE_UNLIMITED_INSTANCES, 4096, 4096, 0, sa_opt.map(|s| s as *const _)) };
-            let err = windows::core::Error::from_thread();
-            eprintln!("{label}: invalid={} err={err}", h.is_invalid());
-            if !h.is_invalid() { unsafe { let _ = CloseHandle(h); } }
-        }
-    }
-}

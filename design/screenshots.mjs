@@ -23,6 +23,14 @@ const SCALE = 1.5;
 const shots = [
   { file: "overview.png", query: "page=overview" },
   { file: "requests.png", query: "page=inbox&select=2" },
+  {
+    file: "request-origin.png",
+    query: "page=inbox",
+    // Show the rundll32 request with its callers expanded.
+    js: `const card = [...document.querySelectorAll('.req')].find(c => c.innerText.includes('rundll32'));
+         card.querySelector('.origin .link')?.click();
+         document.querySelector('.main').scrollTop = card.offsetTop - 24;`,
+  },
   { file: "apps.png", query: "page=apps&app=Discord" },
   { file: "activity.png", query: "page=activity" },
   { file: "settings.png", query: "page=settings" },
@@ -92,6 +100,10 @@ try {
     await call("Page.navigate", { url: `${BASE}/?lang=en&${s.query}` });
     await done;
     await sleep(900); // data load + entry animations + drawer slide-in
+    if (s.js) {
+      await call("Runtime.evaluate", { expression: s.js });
+      await sleep(400);
+    }
     const { data } = await call("Page.captureScreenshot", { format: "png" });
     writeFileSync(join(OUT, s.file), Buffer.from(data, "base64"));
     console.log("saved", s.file);
