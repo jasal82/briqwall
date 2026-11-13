@@ -181,11 +181,11 @@ Die Branding-Bilder des Installers erzeugt `design\make-installer-images.ps1`.
   passen. Manuell gestartet entstehen nur Build-Artefakte zum Testen.
 
   ```bash
-  git tag v0.2.0
+  git tag v0.9.0
   ```
 
   ```bash
-  git push origin v0.2.0
+  git push origin v0.9.0
   ```
 
 * **Code-Signatur (optional):** Sind die Repository-Secrets
