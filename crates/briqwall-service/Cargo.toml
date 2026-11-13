@@ -1,0 +1,41 @@
+[package]
+name = "briqwall-service"
+version.workspace = true
+edition.workspace = true
+description = "Briqwall firewall service (WFP based)"
+
+[dependencies]
+briqwall-common = { path = "../briqwall-common" }
+windows-service = "0.8"
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+log.workspace = true
+sha2 = "0.10"
+rsa = { version = "0.9", default-features = false, features = ["std", "sha2"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+windows = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_Globalization",
+  "Win32_NetworkManagement_WindowsFilteringPlatform",
+  "Win32_Networking_NetworkListManager",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Security_Cryptography",
+  "Win32_Security_Cryptography_Catalog",
+  "Win32_Security_Cryptography_Sip",
+  "Win32_Security_WinTrust",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_Console",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_IO",
+  "Win32_System_Ole",
+  "Win32_System_Pipes",
+  "Win32_System_Rpc",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+rand = "0.8"

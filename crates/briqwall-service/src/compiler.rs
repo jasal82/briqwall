@@ -1,0 +1,307 @@
+//! Translates the high-level policy into concrete WFP filters.
+//!
+//! Weight layout inside the Briqwall sublayer (highest wins):
+//!   15  loopback + DHCP (always permitted, even in lockdown)
+//!   14  lockdown block-all
+//!   13  essential ICMP (path MTU discovery, IPv6 neighbor discovery)
+//!   12  explicit per-app block
+//!   10  per-app permit
+//!    0  default block ("ask" apps fall through to here)
+//!
+//! A block in *any* WFP sublayer wins over permits in other sublayers, so Briqwall
+//! adds protection on top of the Windows Firewall but can never weaken it.
+
+use crate::wfp::{Cond, FilterSpec, LAYER_IN_V4, LAYER_IN_V6, LAYER_OUT_V4, LAYER_OUT_V6};
+use windows::core::GUID;
+use briqwall_common::{Access, Direction, Mode};
+
+const W_ALWAYS: u64 = 15;
+const W_LOCKDOWN: u64 = 14;
+const W_ESSENTIAL: u64 = 13;
+const W_APP_BLOCK: u64 = 12;
+const W_APP_PERMIT: u64 = 10;
+const W_DEFAULT: u64 = 0;
+
+const PROTO_ICMP: u8 = 1;
+const PROTO_UDP: u8 = 17;
+const PROTO_ICMPV6: u8 = 58;
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Purpose {
+    DefaultBlock(Direction),
+    Lockdown(Direction),
+    AppBlock(String, Direction),
+    Other,
+}
+
+pub type Compiled = Vec<(FilterSpec, Purpose)>;
+
+fn spec(name: &str, layer: GUID, weight: u64, permit: bool, conds: Vec<Cond>) -> FilterSpec {
+    FilterSpec { name: format!("Briqwall: {name}"), layer, weight, permit, conds }
+}
+
+/// Private / link-local / multicast ranges considered "local network".
+pub fn lan_v4() -> Vec<Cond> {
+    let r = |a: [u8; 4], bits: u32| Cond::RemoteV4 {
+        addr: u32::from_be_bytes(a),
+        mask: if bits == 0 { 0 } else { u32::MAX << (32 - bits) },
+    };
+    vec![
+        r([10, 0, 0, 0], 8),
+        r([172, 16, 0, 0], 12),
+        r([192, 168, 0, 0], 16),
+        r([169, 254, 0, 0], 16),
+        r([224, 0, 0, 0], 4),
+        r([255, 255, 255, 255], 32),
+    ]
+}
+
+pub fn lan_v6() -> Vec<Cond> {
+    let mut fe80 = [0u8; 16];
+    fe80[0] = 0xfe;
+    fe80[1] = 0x80;
+    let mut fc00 = [0u8; 16];
+    fc00[0] = 0xfc;
+    let mut ff00 = [0u8; 16];
+    ff00[0] = 0xff;
+    vec![
+        Cond::RemoteV6 { addr: fe80, prefix: 10 },
+        Cond::RemoteV6 { addr: fc00, prefix: 7 },
+        Cond::RemoteV6 { addr: ff00, prefix: 8 },
+    ]
+}
+
+/// Filters that do not depend on individual apps.
+pub fn base_filters(mode: Mode) -> Compiled {
+    let mut out = Vec::new();
+    if mode == Mode::Off {
+        return out;
+    }
+    let o = Purpose::Other;
+
+    // Loopback is never filtered.
+    for (layer, n) in [
+        (LAYER_OUT_V4, "Loopback aus v4"),
+        (LAYER_OUT_V6, "Loopback aus v6"),
+        (LAYER_IN_V4, "Loopback ein v4"),
+        (LAYER_IN_V6, "Loopback ein v6"),
+    ] {
+        out.push((spec(n, layer, W_ALWAYS, true, vec![Cond::Loopback]), o.clone()));
+    }
+
+    // DHCP so the machine keeps its address even in lockdown.
+    out.push((
+        spec("DHCP aus v4", LAYER_OUT_V4, W_ALWAYS, true, vec![
+            Cond::Protocol(PROTO_UDP),
+            Cond::RemotePort(67),
+        ]),
+        o.clone(),
+    ));
+    out.push((
+        spec("DHCP ein v4", LAYER_IN_V4, W_ALWAYS, true, vec![
+            Cond::Protocol(PROTO_UDP),
+            Cond::LocalPort(68),
+            Cond::RemotePort(67),
+        ]),
+        o.clone(),
+    ));
+    out.push((
+        spec("DHCPv6 aus", LAYER_OUT_V6, W_ALWAYS, true, vec![
+            Cond::Protocol(PROTO_UDP),
+            Cond::RemotePort(547),
+        ]),
+        o.clone(),
+    ));
+    out.push((
+        spec("DHCPv6 ein", LAYER_IN_V6, W_ALWAYS, true, vec![
+            Cond::Protocol(PROTO_UDP),
+            Cond::LocalPort(546),
+            Cond::RemotePort(547),
+        ]),
+        o.clone(),
+    ));
+
+    if mode == Mode::Lockdown {
+        for (layer, dir, n) in [
+            (LAYER_OUT_V4, Direction::Out, "Sperre aus v4"),
+            (LAYER_OUT_V6, Direction::Out, "Sperre aus v6"),
+            (LAYER_IN_V4, Direction::In, "Sperre ein v4"),
+            (LAYER_IN_V6, Direction::In, "Sperre ein v6"),
+        ] {
+            out.push((spec(n, layer, W_LOCKDOWN, false, vec![]), Purpose::Lockdown(dir)));
+        }
+        return out;
+    }
+
+    // Essential inbound ICMP: echo reply, unreachable / packet-too-big, time exceeded.
+    // Echo *requests* stay blocked (stealth).
+    for icmp_type in [0u16, 3, 11] {
+        out.push((
+            spec(&format!("ICMP Typ {icmp_type}"), LAYER_IN_V4, W_ESSENTIAL, true, vec![
+                Cond::Protocol(PROTO_ICMP),
+                Cond::LocalPort(icmp_type),
+            ]),
+            o.clone(),
+        ));
+    }
+    // ICMPv6 carries neighbor discovery / router advertisements: IPv6 breaks without it.
+    for icmp_type in [1u16, 2, 3, 4, 129, 133, 134, 135, 136] {
+        out.push((
+            spec(&format!("ICMPv6 Typ {icmp_type}"), LAYER_IN_V6, W_ESSENTIAL, true, vec![
+                Cond::Protocol(PROTO_ICMPV6),
+                Cond::LocalPort(icmp_type),
+            ]),
+            o.clone(),
+        ));
+    }
+
+    // Default deny. Outbound always; inbound only where Briqwall owns inbound policy.
+    out.push((
+        spec("Standard: aus v4 blockieren", LAYER_OUT_V4, W_DEFAULT, false, vec![]),
+        Purpose::DefaultBlock(Direction::Out),
+    ));
+    out.push((
+        spec("Standard: aus v6 blockieren", LAYER_OUT_V6, W_DEFAULT, false, vec![]),
+        Purpose::DefaultBlock(Direction::Out),
+    ));
+    if mode != Mode::Relaxed {
+        out.push((
+            spec("Standard: ein v4 blockieren", LAYER_IN_V4, W_DEFAULT, false, vec![]),
+            Purpose::DefaultBlock(Direction::In),
+        ));
+        out.push((
+            spec("Standard: ein v6 blockieren", LAYER_IN_V6, W_DEFAULT, false, vec![]),
+            Purpose::DefaultBlock(Direction::In),
+        ));
+    }
+    out
+}
+
+/// Per-direction input for [`app_filters`].
+#[derive(Clone, Copy, Debug)]
+pub struct DirPolicy {
+    pub access: Access,
+    /// Comes from an explicit user rule (only then do blocks get their own
+    /// filter; automatic blocks simply fall through to the default block).
+    pub explicit: bool,
+}
+
+/// Filters for one app.
+pub fn app_filters(
+    key: &str,
+    name: &str,
+    app_id: &[u8],
+    out_policy: DirPolicy,
+    in_policy: DirPolicy,
+    mode: Mode,
+    network_trusted: bool,
+) -> Compiled {
+    let mut v = Vec::new();
+    if matches!(mode, Mode::Off | Mode::Lockdown) {
+        return v;
+    }
+    let app = || Cond::AppId(app_id.to_vec());
+
+    let mut emit = |dir: Direction, p: DirPolicy| {
+        let access = p.access;
+        let (l4, l6) = match dir {
+            Direction::Out => (LAYER_OUT_V4, LAYER_OUT_V6),
+            Direction::In => (LAYER_IN_V4, LAYER_IN_V6),
+        };
+        let d = if dir == Direction::Out { "aus" } else { "ein" };
+        match access {
+            Access::Allow => {
+                v.push((spec(&format!("{name} {d} v4"), l4, W_APP_PERMIT, true, vec![app()]), Purpose::Other));
+                v.push((spec(&format!("{name} {d} v6"), l6, W_APP_PERMIT, true, vec![app()]), Purpose::Other));
+            }
+            Access::Lan => {
+                // Inbound LAN access is only granted on trusted networks
+                // (public hotspot = nobody gets in).
+                if dir == Direction::In && !network_trusted {
+                    return;
+                }
+                let mut c4 = vec![app()];
+                c4.extend(lan_v4());
+                let mut c6 = vec![app()];
+                c6.extend(lan_v6());
+                v.push((spec(&format!("{name} {d} LAN v4"), l4, W_APP_PERMIT, true, c4), Purpose::Other));
+                v.push((spec(&format!("{name} {d} LAN v6"), l6, W_APP_PERMIT, true, c6), Purpose::Other));
+            }
+            Access::Block => {
+                if !p.explicit {
+                    return;
+                }
+                let p = Purpose::AppBlock(key.to_string(), dir);
+                v.push((spec(&format!("{name} {d} blockiert v4"), l4, W_APP_BLOCK, false, vec![app()]), p.clone()));
+                v.push((spec(&format!("{name} {d} blockiert v6"), l6, W_APP_BLOCK, false, vec![app()]), p));
+            }
+            // Falls through to the default block and generates an inbox entry.
+            Access::Ask => {}
+        }
+    };
+    emit(Direction::Out, out_policy);
+    // In relaxed mode inbound is left to the Windows Firewall unless the user
+    // set an explicit inbound rule.
+    if mode != Mode::Relaxed || in_policy.explicit {
+        emit(Direction::In, in_policy);
+    }
+    v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn auto(a: Access) -> DirPolicy {
+        DirPolicy { access: a, explicit: false }
+    }
+    fn rule(a: Access) -> DirPolicy {
+        DirPolicy { access: a, explicit: true }
+    }
+
+    #[test]
+    fn off_has_no_filters() {
+        assert!(base_filters(Mode::Off).is_empty());
+        assert!(app_filters("k", "n", &[1, 2], rule(Access::Allow), rule(Access::Allow), Mode::Off, true).is_empty());
+    }
+
+    #[test]
+    fn lockdown_blocks_everything_but_keeps_loopback() {
+        let f = base_filters(Mode::Lockdown);
+        assert_eq!(f.iter().filter(|(_, p)| matches!(p, Purpose::Lockdown(_))).count(), 4);
+        assert!(f.iter().any(|(s, _)| s.permit && matches!(s.conds[..], [Cond::Loopback])));
+        assert!(!f.iter().any(|(_, p)| matches!(p, Purpose::DefaultBlock(_))));
+    }
+
+    #[test]
+    fn relaxed_leaves_inbound_to_windows() {
+        let f = base_filters(Mode::Relaxed);
+        assert!(!f.iter().any(|(_, p)| *p == Purpose::DefaultBlock(Direction::In)));
+        let b = base_filters(Mode::Balanced);
+        assert!(b.iter().any(|(_, p)| *p == Purpose::DefaultBlock(Direction::In)));
+    }
+
+    #[test]
+    fn inbound_lan_only_on_trusted_network() {
+        let trusted = app_filters("k", "n", &[1], auto(Access::Ask), auto(Access::Lan), Mode::Balanced, true);
+        let public = app_filters("k", "n", &[1], auto(Access::Ask), auto(Access::Lan), Mode::Balanced, false);
+        assert_eq!(trusted.len(), 2);
+        assert!(public.is_empty());
+    }
+
+    #[test]
+    fn ask_produces_no_permit() {
+        let f = app_filters("k", "n", &[1], auto(Access::Ask), auto(Access::Block), Mode::Strict, true);
+        assert!(f.is_empty(), "automatic decisions rely on the default block");
+        let f = app_filters("k", "n", &[1], rule(Access::Block), auto(Access::Block), Mode::Strict, true);
+        assert_eq!(f.len(), 2);
+        assert!(f.iter().all(|(s, p)| !s.permit && matches!(p, Purpose::AppBlock(_, Direction::Out))));
+    }
+
+    #[test]
+    fn lan_masks() {
+        let v4 = lan_v4();
+        assert!(matches!(v4[1], Cond::RemoteV4 { addr: 0xAC10_0000, mask: 0xFFF0_0000 }));
+        assert!(matches!(v4[5], Cond::RemoteV4 { addr: 0xFFFF_FFFF, mask: 0xFFFF_FFFF }));
+    }
+}

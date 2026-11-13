@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Prüfen & testen
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Frontend – Abhängigkeiten
+        working-directory: ui
+        run: npm ci
+
+      - name: Frontend – Typprüfung
+        working-directory: ui
+        run: npm run check
+
+      - name: Frontend – Build
+        working-directory: ui
+        run: npm run build
+
+      # The UI crate embeds the service binary (Tauri checks it at compile time).
+      - name: Dienst bauen und als Beilage ablegen
+        shell: pwsh
+        run: |
+          cargo build --locked -p briqwall-service
+          New-Item -ItemType Directory -Force crates/briqwall-ui/binaries | Out-Null
+          Copy-Item target/debug/briqwall-service.exe crates/briqwall-ui/binaries/briqwall-service-x86_64-pc-windows-msvc.exe
+
+      - name: Rust – Tests
+        run: cargo test --locked --workspace

@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Briqwall – UI-Mock</title>
+<style>
+/* ------------------------------------------------------------------ tokens */
+:root {
+  --font: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+
+  --bg: #f4f5f8;
+  --nav: #eceef3;
+  --surface: #ffffff;
+  --surface-2: #f8f9fb;
+  --hover: #f1f3f7;
+  --border: #e3e6ec;
+  --border-strong: #d3d8e1;
+  --text: #1a1e27;
+  --text-2: #545c6b;
+  --text-3: #858c9a;
+
+  --accent: #2f6fed;
+  --accent-hover: #2560d6;
+  --accent-soft: #e8effd;
+  --ok: #138a4a;
+  --ok-soft: #e4f5ea;
+  --warn: #b45f06;
+  --warn-soft: #fdf1df;
+  --danger: #cf2e2e;
+  --danger-soft: #fde8e8;
+
+  --radius: 10px;
+  --radius-lg: 14px;
+  --shadow: 0 1px 2px rgba(20, 28, 45, .05), 0 1px 1px rgba(20, 28, 45, .03);
+  --shadow-pop: 0 10px 30px rgba(20, 28, 45, .14), 0 2px 6px rgba(20, 28, 45, .08);
+}
+:root[data-theme="dark"] {
+  --bg: #1f2229;
+  --nav: #1a1d23;
+  --surface: #272b33;
+  --surface-2: #2c3039;
+  --hover: #30353f;
+  --border: #363b46;
+  --border-strong: #444a57;
+  --text: #eceef2;
+  --text-2: #b0b6c2;
+  --text-3: #868d9b;
+  --accent: #6b9bff;
+  --accent-hover: #82abff;
+  --accent-soft: #2b3753;
+  --ok: #4cc584;
+  --ok-soft: #233a2f;
+  --warn: #f0a845;
+  --warn-soft: #3d3222;
+  --danger: #ff7272;
+  --danger-soft: #432a2c;
+  --shadow: 0 1px 2px rgba(0,0,0,.25);
+  --shadow-pop: 0 12px 32px rgba(0,0,0,.45);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font: 14px/1.45 var(--font);
+  color: var(--text);
+  background: #c9ced8;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select { font: inherit; color: inherit; }
+svg { flex: none; }
+
+/* ------------------------------------------------------------------ mock chrome (only for the preview) */
+.stage { min-height: 100%; display: grid; place-items: center; padding: 24px; }
+.mockbar {
+  position: fixed; top: 10px; right: 12px; z-index: 50; display: flex; gap: 6px; align-items: center;
+  background: rgba(255,255,255,.9); border: 1px solid #d0d5de; border-radius: 10px; padding: 5px 6px; font-size: 12px;
+  box-shadow: var(--shadow-pop); color: #1a1e27;
+}
+.mockbar button { border: 1px solid #d0d5de; background: #fff; border-radius: 7px; padding: 3px 9px; cursor: pointer; }
+.mockbar button.on { background: #1a1e27; color: #fff; border-color: #1a1e27; }
+.window {
+  width: min(1180px, 100%); height: min(760px, calc(100vh - 48px));
+  border-radius: 10px; overflow: hidden; box-shadow: 0 24px 60px rgba(15,20,35,.28), 0 0 0 1px rgba(15,20,35,.12);
+  display: grid; grid-template-rows: 32px 1fr; background: var(--bg);
+}
+.window.small { width: 860px; height: 600px; }
+.titlebar { display: flex; align-items: center; gap: 8px; padding: 0 0 0 14px; background: var(--nav); font-size: 12px; color: var(--text-2); }
+.titlebar .sp { flex: 1; }
+.titlebar .wc { width: 46px; height: 32px; display: grid; place-items: center; color: var(--text-2); }
+
+/* ------------------------------------------------------------------ app layout */
+.app { display: grid; grid-template-columns: 236px 1fr; min-height: 0; }
+.nav { background: var(--nav); padding: 10px 10px 14px; display: flex; flex-direction: column; gap: 2px; min-height: 0; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 6px 10px 18px; }
+.brand-mark { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: linear-gradient(140deg, #2fbf71, #1a8f55); color: #fff; }
+.brand b { font: 600 17px var(--font-display); letter-spacing: -.01em; }
+.nav-item {
+  display: flex; align-items: center; gap: 12px; height: 38px; padding: 0 12px; border-radius: 8px;
+  color: var(--text-2); cursor: pointer; border: 0; background: none; text-align: left; position: relative; width: 100%;
+}
+.nav-item:hover { background: var(--hover); color: var(--text); }
+.nav-item.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow); }
+.nav-item.active::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 3px; background: var(--accent); }
+.nav-item .count { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--warn); color: #fff; font-size: 12px; font-weight: 600; display: grid; place-items: center; }
+.nav-foot { margin-top: auto; padding: 10px 12px 0; display: grid; gap: 8px; font-size: 12.5px; color: var(--text-3); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; box-shadow: 0 0 0 3px var(--ok-soft); }
+.nav-foot .row { display: flex; align-items: center; gap: 8px; }
+
+.content { position: relative; min-width: 0; min-height: 0; overflow: hidden; display: grid; }
+.main { overflow-y: auto; overflow-x: hidden; min-width: 0; min-height: 0; scrollbar-gutter: stable; }
+.page { padding: 28px 36px 48px; max-width: 1040px; margin: 0 auto; display: none; }
+.page.active { display: block; animation: fade .18s ease-out; }
+@keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.page-head { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 20px; }
+.page-head h1 { font: 600 26px/1.2 var(--font-display); letter-spacing: -.015em; margin: 0; }
+.page-head p { margin: 4px 0 0; color: var(--text-2); max-width: 640px; }
+.page-head .sp { flex: 1; }
+h2 { font: 600 15px var(--font-display); margin: 28px 0 10px; letter-spacing: -.005em; }
+
+/* ------------------------------------------------------------------ primitives */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow); }
+.pad { padding: 18px 20px; }
+.muted { color: var(--text-2); }
+.faint { color: var(--text-3); font-size: 12.5px; }
+.btn {
+  height: 34px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--surface);
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 500; white-space: nowrap;
+  transition: background .12s, border-color .12s, transform .06s;
+}
+.btn:hover { background: var(--hover); }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: var(--accent-hover); }
+.btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+.btn.danger:hover { background: var(--danger-soft); }
+.btn.danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--text-2); }
+.btn.ghost:hover { background: var(--hover); color: var(--text); }
+.btn.sm { height: 28px; padding: 0 10px; font-size: 13px; }
+.split { display: inline-flex; }
+.split .btn:first-child { border-radius: 8px 0 0 8px; }
+.split .btn:last-child { border-radius: 0 8px 8px 0; padding: 0 8px; border-left: 1px solid rgba(255,255,255,.35); }
+
+.badge { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); white-space: nowrap; }
+.badge.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.badge.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.badge.danger { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+.badge.accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+
+.avatar { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; font: 600 16px var(--font-display); color: #fff; flex: none; }
+.avatar.sm { width: 32px; height: 32px; border-radius: 8px; font-size: 13px; }
+
+.seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; padding: 3px; gap: 2px; }
+.seg button { border: 0; background: none; height: 28px; padding: 0 12px; border-radius: 6px; color: var(--text-2); cursor: pointer; font-size: 13px; white-space: nowrap; }
+.seg button:hover { color: var(--text); }
+.seg button.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow), 0 0 0 1px var(--border); }
+
+.switch { width: 40px; height: 22px; border-radius: 11px; background: var(--border-strong); position: relative; cursor: pointer; border: 0; flex: none; transition: background .15s; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+.switch.on { background: var(--accent); }
+.switch.on::after { transform: translateX(18px); }
+
+.chip { height: 30px; padding: 0 12px; border-radius: 15px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; color: var(--text-2); font-size: 13px; white-space: nowrap; }
+.chip:hover { border-color: var(--border-strong); color: var(--text); }
+.chip.on { background: var(--text); border-color: var(--text); color: var(--surface); }
+
+.input { height: 34px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); padding: 0 12px 0 34px; width: 260px; outline: none; }
+.input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.search { position: relative; }
+.search svg { position: absolute; left: 11px; top: 9px; color: var(--text-3); }
+
+/* ------------------------------------------------------------------ overview */
+.hero { display: grid; grid-template-columns: auto 1fr auto; gap: 20px; align-items: center; padding: 22px 24px; position: relative; overflow: hidden; }
+.hero::after { content: ""; position: absolute; inset: 0; background: radial-gradient(600px 200px at 0% 0%, color-mix(in srgb, var(--ok) 10%, transparent), transparent 70%); pointer-events: none; }
+.hero-icon { width: 64px; height: 64px; border-radius: 18px; display: grid; place-items: center; background: var(--ok-soft); color: var(--ok); }
+.hero h3 { margin: 0; font: 600 22px/1.25 var(--font-display); letter-spacing: -.01em; }
+.hero .meta { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; color: var(--text-2); }
+.hero .meta span { display: inline-flex; align-items: center; gap: 6px; }
+
+.callout { display: flex; align-items: center; gap: 14px; padding: 12px 14px 12px 16px; margin-top: 12px; border-radius: var(--radius-lg); background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 25%, transparent); }
+.callout .t { flex: 1; min-width: 0; }
+.callout b { display: block; }
+.callout .ic { color: var(--warn); }
+
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 12px; }
+.stat { padding: 16px 20px; border-right: 1px solid var(--border); }
+.stat:last-child { border-right: 0; }
+.stat .v { font: 600 26px/1.15 var(--font-display); letter-spacing: -.02em; }
+.stat .l { color: var(--text-2); font-size: 13px; }
+
+.levels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.level { text-align: left; padding: 16px 16px 14px; border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--surface); cursor: pointer; box-shadow: var(--shadow); display: grid; gap: 6px; position: relative; transition: border-color .12s, box-shadow .12s; }
+.level:hover { border-color: var(--border-strong); }
+.level.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+.level .top { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+.level .radio { margin-left: auto; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--border-strong); }
+.level.on .radio { border: 5px solid var(--accent); }
+.level p { margin: 0; color: var(--text-2); font-size: 13px; }
+.level .rec { font-size: 11.5px; font-weight: 600; color: var(--accent); background: var(--accent-soft); padding: 1px 7px; border-radius: 5px; }
+
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.list-row { display: flex; align-items: center; gap: 12px; padding: 11px 20px; border-top: 1px solid var(--border); min-width: 0; }
+.list-row:first-child { border-top: 0; }
+.list-row .grow { flex: 1; min-width: 0; }
+.ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev-icon { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex: none; }
+.ev-icon.ok { background: var(--ok-soft); color: var(--ok); }
+.ev-icon.danger { background: var(--danger-soft); color: var(--danger); }
+.ev-icon.warn { background: var(--warn-soft); color: var(--warn); }
+.ev-icon.accent { background: var(--accent-soft); color: var(--accent); }
+.card-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px 10px; }
+.card-head b { font: 600 14.5px var(--font-display); }
+.link { color: var(--accent); cursor: pointer; font-weight: 500; background: none; border: 0; padding: 0; }
+.link:hover { text-decoration: underline; }
+
+/* ------------------------------------------------------------------ requests */
+.req { padding: 18px 20px; display: grid; gap: 14px; }
+.req + .req { margin-top: 12px; }
+.req-head { display: flex; gap: 14px; align-items: flex-start; min-width: 0; }
+.req-head .grow { flex: 1; min-width: 0; }
+.req-head h3 { margin: 0; font: 600 16px var(--font-display); }
+.req-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.why { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; display: grid; gap: 4px; }
+.why .k { font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; }
+.req-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.req-actions .sp { flex: 1; }
+.req.risk-high { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
+.menu { position: absolute; z-index: 10; min-width: 230px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-pop); padding: 5px; display: none; }
+.menu.open { display: block; }
+.menu button { display: grid; width: 100%; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 7px; cursor: pointer; }
+.menu button:hover { background: var(--hover); }
+.menu small { color: var(--text-3); }
+.uac { display: flex; gap: 8px; align-items: center; color: var(--text-3); font-size: 12.5px; }
+
+.empty { text-align: center; padding: 56px 20px; }
+.empty .big { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; margin: 0 auto 14px; background: var(--ok-soft); color: var(--ok); }
+
+/* ------------------------------------------------------------------ apps */
+.toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.toolbar .sp { flex: 1; }
+.table { overflow: hidden; }
+.thead, .trow { display: grid; grid-template-columns: minmax(220px, 2.4fr) minmax(110px, 1fr) 132px 132px 110px; gap: 12px; align-items: center; padding: 0 16px; }
+.thead { height: 38px; font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.trow { min-height: 56px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.trow:last-child { border-bottom: 0; }
+.trow:hover { background: var(--hover); }
+.trow.sel { background: var(--accent-soft); }
+.appcell { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.appcell .t { min-width: 0; }
+.appcell b { font-weight: 600; display: block; }
+.state { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; font-size: 13px; }
+.state i { width: 8px; height: 8px; border-radius: 50%; }
+.state.ok i { background: var(--ok); } .state.ok { color: var(--ok); }
+.state.danger i { background: var(--danger); } .state.danger { color: var(--danger); }
+.state.warn i { background: var(--warn); } .state.warn { color: var(--warn); }
+.state.accent i { background: var(--accent); } .state.accent { color: var(--accent); }
+.state.muted i { background: var(--text-3); } .state.muted { color: var(--text-2); }
+
+.drawer-wrap { position: absolute; inset: 0; pointer-events: none; }
+.drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 440px; max-width: 92%; background: var(--surface); border-left: 1px solid var(--border); box-shadow: var(--shadow-pop); transform: translateX(105%); visibility: hidden; transition: transform .22s cubic-bezier(.2,.8,.2,1), visibility 0s .22s; pointer-events: auto; display: flex; flex-direction: column; }
+.drawer.open { transform: none; visibility: visible; transition: transform .22s cubic-bezier(.2,.8,.2,1); }
+.drawer-head { padding: 20px 22px 14px; display: flex; gap: 14px; align-items: flex-start; border-bottom: 1px solid var(--border); }
+.drawer-body { padding: 18px 22px; overflow: auto; display: grid; gap: 18px; align-content: start; }
+.field { display: grid; gap: 8px; min-width: 0; }
+.drawer-body > * { min-width: 0; }
+.drawer .seg { display: flex; }
+.drawer .seg button { flex: 1; padding: 0 6px; }
+.field label { font-weight: 600; font-size: 13px; }
+.kv { display: grid; grid-template-columns: 120px 1fr; gap: 8px 12px; font-size: 13px; }
+.kv dt { color: var(--text-3); }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------------------ activity */
+.day { font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; margin: 18px 4px 8px; }
+.time { color: var(--text-3); font-size: 12.5px; font-variant-numeric: tabular-nums; flex: none; }
+
+/* ------------------------------------------------------------------ settings */
+.setting { display: flex; align-items: center; gap: 16px; padding: 16px 20px; border-top: 1px solid var(--border); }
+.setting:first-child { border-top: 0; }
+.setting .grow { flex: 1; min-width: 0; }
+.setting b { font-weight: 600; display: block; }
+.setting .ic { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; background: var(--surface-2); color: var(--text-2); flex: none; border: 1px solid var(--border); }
+
+/* ------------------------------------------------------------------ responsive */
+@media (max-width: 1000px) {
+  .app { grid-template-columns: 64px 1fr; }
+  .nav { padding: 10px 8px; }
+  .brand b, .nav-item span, .nav-foot .txt { display: none; }
+  .brand { justify-content: center; padding: 6px 0 18px; }
+  .nav-item { justify-content: center; padding: 0; }
+  .nav-item .count { position: absolute; top: 2px; right: 4px; min-width: 18px; height: 18px; font-size: 11px; }
+  .nav-foot { padding: 0; justify-items: center; }
+  .page { padding: 22px 22px 40px; }
+  .two { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .stat:nth-child(2) { border-right: 0; }
+  .stat:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
+  .thead, .trow { grid-template-columns: minmax(180px, 2fr) 120px 120px; }
+  .thead > :nth-child(2), .trow > :nth-child(2), .thead > :nth-child(5), .trow > :nth-child(5) { display: none; }
+}
+.window.small .app { grid-template-columns: 64px 1fr; }
+.window.small .nav { padding: 10px 8px; }
+.window.small .brand b, .window.small .nav-item span, .window.small .nav-foot .txt { display: none; }
+.window.small .brand { justify-content: center; padding: 6px 0 18px; }
+.window.small .nav-item { justify-content: center; padding: 0; }
+.window.small .nav-item .count { position: absolute; top: 2px; right: 4px; min-width: 18px; height: 18px; font-size: 11px; }
+.window.small .nav-foot { padding: 0; justify-items: center; }
+.window.small .page { padding: 22px 22px 40px; }
+.window.small .two { grid-template-columns: 1fr; }
+.window.small .levels { grid-template-columns: 1fr; }
+.window.small .stats { grid-template-columns: repeat(2, 1fr); }
+.window.small .stat:nth-child(2) { border-right: 0; }
+.window.small .stat:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
+.window.small .hero { grid-template-columns: auto 1fr; }
+.window.small .hero > .btn { grid-column: 1 / -1; justify-self: start; }
+.window.small .thead, .window.small .trow { grid-template-columns: minmax(180px, 2fr) 120px 120px; }
+.window.small .thead > :nth-child(2), .window.small .trow > :nth-child(2), .window.small .thead > :nth-child(5), .window.small .trow > :nth-child(5) { display: none; }
+</style>
+</head>
+<body>
+
+<!-- Icon sprite (Fluent-/Lucide-artige Linien-Icons, 1.75px) -->
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" d="M12 3 4.5 6v5.5c0 4.6 3.1 8.2 7.5 9.5 4.4-1.3 7.5-4.9 7.5-9.5V6L12 3Z"/></symbol>
+    <symbol id="i-shield-check" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" d="M12 3 4.5 6v5.5c0 4.6 3.1 8.2 7.5 9.5 4.4-1.3 7.5-4.9 7.5-9.5V6L12 3Z"/><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="m8.7 12 2.3 2.3 4.4-4.6"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1v-8.5Z"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" d="M6 16.5V11a6 6 0 1 1 12 0v5.5l1.5 1.5h-15L6 16.5Z"/><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M10 20.5a2.2 2.2 0 0 0 4 0"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.75"/><rect x="13" y="4" width="7" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.75"/><rect x="4" y="13" width="7" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.75"/><rect x="13" y="13" width="7" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.75"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="M3 12h4l2.5-6 5 12 2.5-6H21"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.75"/><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" d="M12 2.8 14 5l3-.4.9 2.9 2.6 1.5-.8 2.9.8 2.9-2.6 1.5-.9 2.9-3-.4-2 2.2-2-2.2-3 .4-.9-2.9-2.6-1.5.8-2.9-.8-2.9 2.6-1.5L7 4.6l3 .4 2-2.2Z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-block" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.75"/><path stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="m6.4 17.6 11.2-11.2"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" d="M10.3 4.5 2.9 17.6A2 2 0 0 0 4.6 20.5h14.8a2 2 0 0 0 1.7-2.9L13.7 4.5a2 2 0 0 0-3.4 0Z"/><path stroke="currentColor" stroke-width="1.9" stroke-linecap="round" d="M12 9.5v4.2M12 16.9v.1"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.75"/><path stroke="currentColor" stroke-width="1.9" stroke-linecap="round" d="M12 11v5.2M12 7.9v.1"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M3.5 9.5a12.5 12.5 0 0 1 17 0M6.5 12.8a8 8 0 0 1 11 0M9.5 16a3.6 3.6 0 0 1 5 0"/><circle cx="12" cy="19" r="1.1" fill="currentColor"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/><path fill="none" stroke="currentColor" stroke-width="1.75" d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.75"/><path stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="m16 16 4 4"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="m7 10 5 5 5-5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="m6.5 6.5 11 11m0-11-11 11"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.75"/><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M12 7.5V12l3 2"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.75"/><path fill="none" stroke="currentColor" stroke-width="1.5" d="M3.8 12h16.4M12 3.8c2.4 2.4 3.4 5.2 3.4 8.2s-1 5.8-3.4 8.2c-2.4-2.4-3.4-5.2-3.4-8.2s1-5.8 3.4-8.2Z"/></symbol>
+    <symbol id="i-fingerprint" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M6.5 8.5a6.5 6.5 0 0 1 11.6 1.8M5.5 13c0-1 .1-1.9.4-2.7M18.5 12.6c0 2.4-.4 4.6-1.2 6.4M9 19.5c.7-2 1.1-4.3 1.1-6.6a1.9 1.9 0 0 1 3.8 0c0 1 0 2-.1 3M8.1 12.6c0 1.9-.3 3.6-.8 5.1M15.4 17.8c-.2.8-.5 1.6-.8 2.3"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M12 3.5V12M7.2 6.5a7.5 7.5 0 1 0 9.6 0"/></symbol>
+    <symbol id="i-swap" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="M4 8h13l-3.5-3.5M20 16H7l3.5 3.5"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10Z"/></symbol>
+  </defs>
+</svg>
+
+<div class="mockbar">
+  <span style="opacity:.6;padding:0 4px">Mock</span>
+  <button id="b-light" class="on" onclick="setTheme('light')">Hell</button>
+  <button id="b-dark" onclick="setTheme('dark')">Dunkel</button>
+  <span style="width:1px;height:16px;background:#d0d5de"></span>
+  <button id="b-large" class="on" onclick="setSize(false)">Groß</button>
+  <button id="b-small" onclick="setSize(true)">Klein 860×600</button>
+</div>
+
+<div class="stage">
+<div class="window" id="win">
+  <div class="titlebar">
+    <svg width="14" height="14" style="color:#1a8f55"><use href="#i-shield-check"/></svg> Briqwall
+    <span class="sp"></span>
+    <span class="wc">—</span><span class="wc">▢</span><span class="wc">✕</span>
+  </div>
+
+  <div class="app">
+    <!-- ================================================= NAV -->
+    <nav class="nav">
+      <div class="brand">
+        <div class="brand-mark"><svg width="18" height="18"><use href="#i-shield-check"/></svg></div>
+        <b>Briqwall</b>
+      </div>
+      <button class="nav-item active" data-page="overview"><svg width="18" height="18"><use href="#i-home"/></svg><span>Übersicht</span></button>
+      <button class="nav-item" data-page="inbox"><svg width="18" height="18"><use href="#i-bell"/></svg><span>Anfragen</span><em class="count">3</em></button>
+      <button class="nav-item" data-page="apps"><svg width="18" height="18"><use href="#i-grid"/></svg><span>Apps</span></button>
+      <button class="nav-item" data-page="activity"><svg width="18" height="18"><use href="#i-pulse"/></svg><span>Aktivität</span></button>
+      <button class="nav-item" data-page="settings"><svg width="18" height="18"><use href="#i-gear"/></svg><span>Einstellungen</span></button>
+      <div class="nav-foot">
+        <div class="row"><span class="dot"></span><span class="txt">Schutzdienst aktiv</span></div>
+      </div>
+    </nav>
+
+    <div class="content">
+    <main class="main">
+      <!-- ================================================= OVERVIEW -->
+      <section class="page active" id="p-overview">
+        <div class="page-head"><div><h1>Übersicht</h1></div></div>
+
+        <div class="card hero">
+          <div class="hero-icon"><svg width="34" height="34"><use href="#i-shield-check"/></svg></div>
+          <div>
+            <h3>Ihr PC ist geschützt</h3>
+            <div class="meta">
+              <span><svg width="15" height="15"><use href="#i-shield"/></svg>Stufe „Ausgewogen“</span>
+              <span><svg width="15" height="15"><use href="#i-wifi"/></svg>Brugesstr 3 3 · Heimnetz</span>
+            </div>
+          </div>
+          <button class="btn danger"><svg width="16" height="16"><use href="#i-lock"/></svg>Notfall-Sperre</button>
+        </div>
+
+        <div class="callout">
+          <svg class="ic" width="20" height="20"><use href="#i-bell"/></svg>
+          <div class="t"><b>3 Apps warten auf Ihre Entscheidung</b><span class="muted">curl, Hakobo und Reolink wurden angehalten. Nichts davon ist dringend.</span></div>
+          <button class="btn primary" onclick="go('inbox')">Ansehen</button>
+        </div>
+
+        <div class="card stats">
+          <div class="stat"><div class="v">146</div><div class="l">Apps mit Netzzugang</div></div>
+          <div class="stat"><div class="v">5</div><div class="l">Apps blockiert</div></div>
+          <div class="stat"><div class="v" style="color:var(--warn)">3</div><div class="l">Offene Anfragen</div></div>
+          <div class="stat"><div class="v">27</div><div class="l">Abgewehrte Versuche heute</div></div>
+        </div>
+
+        <h2>Schutzstufe</h2>
+        <div class="levels">
+          <button class="level">
+            <div class="top">Entspannt <span class="radio"></span></div>
+            <p>Fragt nur bei unsignierten Programmen aus Benutzerordnern.</p>
+          </button>
+          <button class="level on">
+            <div class="top">Ausgewogen <span class="rec">Empfohlen</span><span class="radio"></span></div>
+            <p>Windows, installierte Software und bekannte Hersteller laufen automatisch.</p>
+          </button>
+          <button class="level">
+            <div class="top">Streng <span class="radio"></span></div>
+            <p>Nur Windows und signierte installierte Software laufen ohne Rückfrage.</p>
+          </button>
+        </div>
+
+        <div class="two" style="margin-top:12px">
+          <div class="card">
+            <div class="card-head"><b>Netzwerk</b></div>
+            <div class="list-row">
+              <div class="ev-icon accent"><svg width="16" height="16"><use href="#i-wifi"/></svg></div>
+              <div class="grow"><div class="ellipsis" style="font-weight:600">Brugesstr 3 3</div><div class="faint">Freigaben und Gerätesuche im Heimnetz erlaubt</div></div>
+              <div class="seg"><button>Öffentlich</button><button class="on">Heimnetz</button></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><b>Zuletzt</b><button class="link" onclick="go('activity')">Alle anzeigen</button></div>
+            <div class="list-row"><div class="ev-icon danger"><svg width="15" height="15"><use href="#i-block"/></svg></div><div class="grow ellipsis">curl angehalten → 104.20.23.154 (HTTPS)</div><span class="time">22:31</span></div>
+            <div class="list-row"><div class="ev-icon ok"><svg width="15" height="15"><use href="#i-check"/></svg></div><div class="grow ellipsis">Codex automatisch erlaubt · OpenAI</div><span class="time">22:28</span></div>
+            <div class="list-row"><div class="ev-icon accent"><svg width="15" height="15"><use href="#i-shield"/></svg></div><div class="grow ellipsis">Schutz gestartet · 404 Regeln aktiv</div><span class="time">22:27</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================= INBOX -->
+      <section class="page" id="p-inbox">
+        <div class="page-head">
+          <div><h1>Anfragen</h1><p>Diese Apps kennt Briqwall noch nicht. Ihre Verbindungen bleiben blockiert, bis Sie entscheiden.</p></div>
+        </div>
+
+        <article class="card req risk-high">
+          <div class="req-head">
+            <div class="avatar" style="background:#7c5cd6">H</div>
+            <div class="grow">
+              <h3>Hakobo</h3>
+              <div class="faint ellipsis">C:\Users\Anwender\AppData\Local\Programs\Hakobo\Hakobo.exe</div>
+              <div class="req-tags">
+                <span class="badge danger"><svg width="12" height="12"><use href="#i-alert"/></svg>Hohes Risiko</span>
+                <span class="badge warn">Nicht signiert</span>
+                <span class="badge">AppData</span>
+              </div>
+            </div>
+          </div>
+          <div class="why">
+            <span class="k">Warum fragt Briqwall?</span>
+            <span>Nicht signiert und in einem Ordner, in den jedes Programm schreiben kann – so verbreitet sich typischerweise Schadsoftware. Wenn Sie Hakobo selbst installiert haben, können Sie es bedenkenlos erlauben.</span>
+            <span class="faint">Wollte zu 185.199.108.153:443 (HTTPS) · 4 Versuche · vor 3 Min.</span>
+          </div>
+          <div class="req-actions">
+            <button class="btn danger-solid">Blockieren</button>
+            <span class="split" style="position:relative">
+              <button class="btn">Erlauben</button><button class="btn" onclick="toggleMenu(event,'m1')"><svg width="14" height="14"><use href="#i-chev"/></svg></button>
+              <div class="menu" id="m1" style="top:38px;left:0">
+                <button><span>Immer erlauben</span><small>Auch nach Neustarts</small></button>
+                <button><span>Für 1 Stunde</span><small>Danach automatisch wieder blockiert</small></button>
+                <button><span>Nur lokales Netzwerk</span><small>Drucker, NAS, Smart Home – kein Internet</small></button>
+              </div>
+            </span>
+            <span class="sp"></span>
+            <button class="btn ghost">Später</button>
+          </div>
+        </article>
+
+        <article class="card req">
+          <div class="req-head">
+            <div class="avatar" style="background:#3a7bd5">c</div>
+            <div class="grow">
+              <h3>curl</h3>
+              <div class="faint ellipsis">C:\Program Files\Git\mingw64\bin\curl.exe</div>
+              <div class="req-tags">
+                <span class="badge warn"><svg width="12" height="12"><use href="#i-info"/></svg>Mittleres Risiko</span>
+                <span class="badge ok"><svg width="12" height="12"><use href="#i-check"/></svg>Signiert · The Git Development Community</span>
+                <span class="badge">Systemwerkzeug</span>
+              </div>
+            </div>
+          </div>
+          <div class="why">
+            <span class="k">Warum fragt Briqwall?</span>
+            <span>Ein Werkzeug, das Angreifer gern zum Nachladen von Schadcode missbrauchen. Erlauben Sie es, wenn Sie es gerade selbst benutzen.</span>
+            <span class="faint">Wollte zu 104.20.23.154:443 (HTTPS) · 2 Versuche · vor 6 Min.</span>
+          </div>
+          <div class="req-actions">
+            <span class="split" style="position:relative">
+              <button class="btn primary">Für 1 Stunde erlauben</button><button class="btn primary" onclick="toggleMenu(event,'m2')"><svg width="14" height="14"><use href="#i-chev"/></svg></button>
+              <div class="menu" id="m2" style="top:38px;left:0">
+                <button><span>Immer erlauben</span><small>Auch nach Neustarts</small></button>
+                <button><span>Nur lokales Netzwerk</span><small>Drucker, NAS, Smart Home – kein Internet</small></button>
+              </div>
+            </span>
+            <button class="btn danger">Blockieren</button>
+            <span class="sp"></span>
+            <button class="btn ghost">Später</button>
+          </div>
+        </article>
+
+        <article class="card req">
+          <div class="req-head">
+            <div class="avatar" style="background:#d9822b">R</div>
+            <div class="grow">
+              <h3>Reolink</h3>
+              <div class="faint ellipsis">C:\Users\Anwender\AppData\Local\Programs\Reolink\Reolink.exe</div>
+              <div class="req-tags">
+                <span class="badge warn"><svg width="12" height="12"><use href="#i-info"/></svg>Mittleres Risiko</span>
+                <span class="badge ok"><svg width="12" height="12"><use href="#i-check"/></svg>Signiert · REOLINK TECHNOLOGY PTE. LTD.</span>
+              </div>
+            </div>
+          </div>
+          <div class="why">
+            <span class="k">Warum fragt Briqwall?</span>
+            <span>Signiert, aber von einem Hersteller, den Briqwall noch nicht kennt. Wenn Sie erlauben, vertraut Briqwall künftig auch Updates dieses Herstellers.</span>
+            <span class="faint">Wollte zu 192.168.178.40:9000 (lokales Netz) · 12 Versuche · vor 1 Min.</span>
+          </div>
+          <div class="req-actions">
+            <span class="split" style="position:relative">
+              <button class="btn primary">Erlauben</button><button class="btn primary" onclick="toggleMenu(event,'m3')"><svg width="14" height="14"><use href="#i-chev"/></svg></button>
+              <div class="menu" id="m3" style="top:38px;left:0">
+                <button><span>Für 1 Stunde</span><small>Danach automatisch wieder blockiert</small></button>
+                <button><span>Nur lokales Netzwerk</span><small>Empfohlen: Ziel liegt im Heimnetz</small></button>
+              </div>
+            </span>
+            <button class="btn danger">Blockieren</button>
+            <span class="sp"></span>
+            <button class="btn ghost">Später</button>
+          </div>
+        </article>
+
+        <p class="uac" style="margin-top:16px"><svg width="15" height="15"><use href="#i-fingerprint"/></svg>Beim Erlauben fragt Windows einmal nach Bestätigung. So kann sich Schadsoftware nicht selbst freischalten. Blockieren geht sofort.</p>
+      </section>
+
+      <!-- ================================================= APPS -->
+      <section class="page" id="p-apps">
+        <div class="page-head"><div><h1>Apps</h1><p>Alle Programme, die Briqwall gesehen hat, und wie es entschieden hat.</p></div></div>
+        <div class="toolbar">
+          <label class="search"><svg width="16" height="16"><use href="#i-search"/></svg><input class="input" placeholder="App oder Pfad suchen"></label>
+          <button class="chip on">Alle</button>
+          <button class="chip">Erlaubt</button>
+          <button class="chip">Blockiert</button>
+          <button class="chip">Eigene Regeln</button>
+          <span class="sp"></span>
+          <span class="faint" style="display:inline-flex;align-items:center;gap:8px">Windows-Komponenten zeigen <button class="switch" onclick="this.classList.toggle('on')"></button></span>
+        </div>
+        <div class="card table">
+          <div class="thead"><span>App</span><span>Herkunft</span><span>Internet</span><span>Eingehend</span><span>Zuletzt</span></div>
+          <div class="trow" onclick="openDrawer(this)"><div class="appcell"><div class="avatar sm" style="background:#3a7bd5">c</div><div class="t"><b class="ellipsis">curl</b><div class="faint ellipsis">C:\Program Files\Git\mingw64\bin</div></div></div><span><span class="badge">Systemwerkzeug</span></span><span class="state warn"><i></i>Wartet</span><span class="state muted"><i></i>Blockiert</span><span class="time">vor 6 Min.</span></div>
+          <div class="trow" onclick="openDrawer(this)"><div class="appcell"><div class="avatar sm" style="background:#5b6ee1">D</div><div class="t"><b class="ellipsis">Discord</b><div class="faint ellipsis">C:\Users\Anwender\AppData\Local\Discord\app-1.0.9187</div></div></div><span><span class="badge">Benutzerordner</span></span><span class="state ok"><i></i>Erlaubt</span><span class="state muted"><i></i>Blockiert</span><span class="time">gerade eben</span></div>
+          <div class="trow" onclick="openDrawer(this)"><div class="appcell"><div class="avatar sm" style="background:#2b8a5b">G</div><div class="t"><b class="ellipsis">Google Chrome</b><div class="faint ellipsis">C:\Program Files\Google\Chrome\Application</div></div></div><span><span class="badge">Installiert</span></span><span class="state ok"><i></i>Erlaubt</span><span class="state muted"><i></i>Blockiert</span><span class="time">gerade eben</span></div>
+          <div class="trow" onclick="openDrawer(this)"><div class="appcell"><div class="avatar sm" style="background:#7c5cd6">H</div><div class="t"><b class="ellipsis">Hakobo</b><div class="faint ellipsis">C:\Users\Anwender\AppData\Local\Programs\Hakobo</div></div></div><span><span class="badge">Benutzerordner</span></span><span class="state warn"><i></i>Wartet</span><span class="state muted"><i></i>Blockiert</span><span class="time">vor 3 Min.</span></div>
+          <div class="trow" onclick="openDrawer(this)"><div class="appcell"><div class="avatar sm" style="background:#c0392b">M</div><div class="t"><b class="ellipsis">Malwarebytes</b><div class="faint ellipsis">C:\Program Files\Malwarebytes\Anti-Malware</div></div></div><span><span class="badge">Installiert</span></span><span class="state ok"><i></i>Erlaubt</span><span class="state muted"><i></i>Blockiert</span><span class="time">vor 1 Std.</span></div>
+          <div class="trow" onclick="openDrawer(this)"><div class="appcell"><div class="avatar sm" style="background:#2563eb">W</div><div class="t"><b class="ellipsis">Windows PowerShell</b><div class="faint ellipsis">C:\Windows\System32\WindowsPowerShell\v1.0</div></div></div><span><span class="badge">Systemwerkzeug</span></span><span class="state danger"><i></i>Blockiert</span><span class="state muted"><i></i>Blockiert</span><span class="time">gestern</span></div>
+          <div class="trow" onclick="openDrawer(this)"><div class="appcell"><div class="avatar sm" style="background:#d9822b">R</div><div class="t"><b class="ellipsis">Reolink</b><div class="faint ellipsis">C:\Users\Anwender\AppData\Local\Programs\Reolink</div></div></div><span><span class="badge">Benutzerordner</span></span><span class="state warn"><i></i>Wartet</span><span class="state muted"><i></i>Blockiert</span><span class="time">vor 1 Min.</span></div>
+          <div class="trow" onclick="openDrawer(this)"><div class="appcell"><div class="avatar sm" style="background:#0f7b6c">V</div><div class="t"><b class="ellipsis">Visual Studio Code</b><div class="faint ellipsis">C:\Users\Anwender\AppData\Local\Programs\Microsoft VS Code</div></div></div><span><span class="badge">Benutzerordner</span></span><span class="state ok"><i></i>Erlaubt</span><span class="state accent"><i></i>Nur LAN</span><span class="time">vor 12 Min.</span></div>
+        </div>
+
+      </section>
+
+      <!-- ================================================= ACTIVITY -->
+      <section class="page" id="p-activity">
+        <div class="page-head"><div><h1>Aktivität</h1><p>Was Briqwall getan hat. Wiederholte Versuche werden zusammengefasst.</p></div></div>
+        <div class="toolbar"><button class="chip on">Alles</button><button class="chip">Blockierungen</button><button class="chip">Entscheidungen</button></div>
+        <div class="day">Heute</div>
+        <div class="card">
+          <div class="list-row"><div class="ev-icon danger"><svg width="15" height="15"><use href="#i-block"/></svg></div><div class="grow"><div class="ellipsis"><b>Reolink</b> angehalten → 192.168.178.40:9000</div><div class="faint">Wartet auf Ihre Entscheidung · 12 Versuche</div></div><span class="time">22:34</span></div>
+          <div class="list-row"><div class="ev-icon warn"><svg width="15" height="15"><use href="#i-bell"/></svg></div><div class="grow"><div class="ellipsis"><b>Hakobo</b> fragt nach Internetzugang</div><div class="faint">Hohes Risiko: nicht signiert, AppData</div></div><span class="time">22:33</span></div>
+          <div class="list-row"><div class="ev-icon danger"><svg width="15" height="15"><use href="#i-block"/></svg></div><div class="grow"><div class="ellipsis"><b>curl</b> angehalten → 104.20.23.154:443 (HTTPS)</div><div class="faint">Systemwerkzeug · 2 Versuche</div></div><span class="time">22:31</span></div>
+          <div class="list-row"><div class="ev-icon ok"><svg width="15" height="15"><use href="#i-check"/></svg></div><div class="grow"><div class="ellipsis"><b>Codex</b> automatisch erlaubt</div><div class="faint">Signiert vom bekannten Hersteller „OpenAI OpCo, LLC“</div></div><span class="time">22:28</span></div>
+          <div class="list-row"><div class="ev-icon accent"><svg width="15" height="15"><use href="#i-shield"/></svg></div><div class="grow"><div class="ellipsis">Schutz gestartet · 404 Regeln aktiv</div><div class="faint">143 laufende Programme bewertet</div></div><span class="time">22:27</span></div>
+        </div>
+        <div class="day">Gestern</div>
+        <div class="card">
+          <div class="list-row"><div class="ev-icon accent"><svg width="15" height="15"><use href="#i-swap"/></svg></div><div class="grow"><div class="ellipsis">Schutzstufe: Streng → Ausgewogen</div></div><span class="time">18:02</span></div>
+          <div class="list-row"><div class="ev-icon danger"><svg width="15" height="15"><use href="#i-block"/></svg></div><div class="grow"><div class="ellipsis"><b>Windows PowerShell</b> blockiert → 93.184.216.34:80 (HTTP)</div><div class="faint">Durch Ihre Regel</div></div><span class="time">17:41</span></div>
+        </div>
+      </section>
+
+      <!-- ================================================= SETTINGS -->
+      <section class="page" id="p-settings">
+        <div class="page-head"><div><h1>Einstellungen</h1></div></div>
+        <h2 style="margin-top:0">Allgemein</h2>
+        <div class="card">
+          <div class="setting"><div class="ic"><svg width="18" height="18"><use href="#i-bell"/></svg></div><div class="grow"><b>Benachrichtigen, wenn eine App wartet</b><span class="faint">Dezente Windows-Benachrichtigung, keine Pop-ups</span></div><button class="switch on" onclick="this.classList.toggle('on')"></button></div>
+          <div class="setting"><div class="ic"><svg width="18" height="18"><use href="#i-power"/></svg></div><div class="grow"><b>Mit Windows starten</b><span class="faint">Startet unsichtbar im Infobereich. Der Schutz läuft auch ohne Oberfläche.</span></div><button class="switch on" onclick="this.classList.toggle('on')"></button></div>
+          <div class="setting"><div class="ic"><svg width="18" height="18"><use href="#i-moon"/></svg></div><div class="grow"><b>Darstellung</b><span class="faint">Folgt standardmäßig Windows</span></div><div class="seg"><button class="on">System</button><button>Hell</button><button>Dunkel</button></div></div>
+        </div>
+        <h2>Netzwerk</h2>
+        <div class="card">
+          <div class="setting"><div class="ic"><svg width="18" height="18"><use href="#i-wifi"/></svg></div><div class="grow"><b>Windows-Dienste im Heimnetz erlauben</b><span class="faint">Dateifreigabe, Drucker- und Gerätesuche, Streaming. Nur in vertrauenswürdigen Netzen und nur aus dem lokalen Netz.</span></div><button class="switch on" onclick="this.classList.toggle('on')"></button></div>
+          <div class="setting"><div class="ic"><svg width="18" height="18"><use href="#i-globe"/></svg></div><div class="grow"><b>Brugesstr 3 3</b><span class="faint">Aktuell verbunden · Windows: Privat</span></div><div class="seg"><button>Öffentlich</button><button class="on">Heimnetz</button></div></div>
+        </div>
+        <h2>Lernen</h2>
+        <div class="card">
+          <div class="setting"><div class="ic"><svg width="18" height="18"><use href="#i-fingerprint"/></svg></div><div class="grow"><b>Hersteller merken</b><span class="faint">Wenn Sie eine signierte App dauerhaft erlauben, vertraut Briqwall auch ihren Updates.</span></div><button class="switch on" onclick="this.classList.toggle('on')"></button></div>
+          <div class="setting"><div style="width:36px"></div><div class="grow"><b style="font-weight:500">REOLINK TECHNOLOGY PTE. LTD.</b><span class="faint">gemerkt am 12.11.</span></div><button class="btn ghost sm">Entfernen</button></div>
+        </div>
+        <h2>Über Briqwall</h2>
+        <div class="card pad"><dl class="kv"><dt>Version</dt><dd>0.2.0</dd><dt>Filter-Engine</dt><dd><span class="state ok"><i></i>Windows Filtering Platform aktiv · 404 Regeln</span></dd><dt>Daten</dt><dd>C:\ProgramData\Briqwall</dd></dl></div>
+      </section>
+    </main>
+      <div class="drawer-wrap">
+          <aside class="drawer" id="drawer">
+            <div class="drawer-head">
+              <div class="avatar" style="background:#5b6ee1">D</div>
+              <div style="flex:1;min-width:0"><h3 style="margin:0;font:600 17px var(--font-display)">Discord</h3><div class="faint">Signiert · Discord Inc.</div></div>
+              <button class="btn ghost sm" onclick="closeDrawer()" aria-label="Schließen"><svg width="16" height="16"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="drawer-body">
+              <div class="field">
+                <label>Internet (ausgehend)</label>
+                <div class="seg"><button class="on">Automatisch</button><button>Erlauben</button><button>Nur LAN</button><button>Blockieren</button></div>
+                <span class="faint">Automatisch: erlaubt – signiert vom bekannten Hersteller „Discord Inc.“</span>
+              </div>
+              <div class="field">
+                <label>Eingehende Verbindungen</label>
+                <div class="seg"><button class="on">Automatisch</button><button>Erlauben</button><button>Nur LAN</button><button>Blockieren</button></div>
+                <span class="faint">Automatisch: blockiert</span>
+              </div>
+              <dl class="kv">
+                <dt>Pfad</dt><dd>C:\Users\Anwender\AppData\Local\Discord\app-1.0.9187\Discord.exe</dd>
+                <dt>Herkunft</dt><dd>Benutzerordner – jedes Programm mit Ihren Rechten könnte die Datei ersetzen</dd>
+                <dt>Risiko</dt><dd><span class="badge ok">Gering</span></dd>
+                <dt>Zuerst gesehen</dt><dd>12.11. 22:27</dd>
+                <dt>Blockiert</dt><dd>keine Versuche</dd>
+              </dl>
+              <div style="display:flex;gap:8px"><button class="btn sm">Auf automatisch zurücksetzen</button><button class="btn ghost sm">Aus Liste entfernen</button></div>
+            </div>
+          </aside>
+        </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+  const pages = document.querySelectorAll('.page');
+  const navs = document.querySelectorAll('.nav-item');
+  function go(id) {
+    pages.forEach(p => p.classList.toggle('active', p.id === 'p-' + id));
+    navs.forEach(n => n.classList.toggle('active', n.dataset.page === id));
+    closeDrawer();
+    document.querySelector('.main').scrollTop = 0;
+  }
+  navs.forEach(n => n.addEventListener('click', () => go(n.dataset.page)));
+  document.querySelectorAll('.seg').forEach(s => s.addEventListener('click', e => {
+    if (e.target.tagName !== 'BUTTON') return;
+    s.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === e.target));
+  }));
+  document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
+    c.parentElement.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === c));
+  }));
+  document.querySelectorAll('.level').forEach(l => l.addEventListener('click', () => {
+    document.querySelectorAll('.level').forEach(x => x.classList.toggle('on', x === l));
+  }));
+  function openDrawer(row) {
+    document.querySelectorAll('.trow').forEach(r => r.classList.toggle('sel', r === row));
+    document.getElementById('drawer').classList.add('open');
+  }
+  function closeDrawer() {
+    document.getElementById('drawer').classList.remove('open');
+    document.querySelectorAll('.trow').forEach(r => r.classList.remove('sel'));
+  }
+  function toggleMenu(e, id) {
+    e.stopPropagation();
+    document.querySelectorAll('.menu').forEach(m => m.id !== id && m.classList.remove('open'));
+    document.getElementById(id).classList.toggle('open');
+  }
+  document.addEventListener('click', () => document.querySelectorAll('.menu').forEach(m => m.classList.remove('open')));
+  function setTheme(t) {
+    document.documentElement.dataset.theme = t;
+    document.getElementById('b-light').classList.toggle('on', t === 'light');
+    document.getElementById('b-dark').classList.toggle('on', t === 'dark');
+  }
+  function setSize(small) {
+    document.getElementById('win').classList.toggle('small', small);
+    document.getElementById('b-small').classList.toggle('on', small);
+    document.getElementById('b-large').classList.toggle('on', !small);
+  }
+  const hash = location.hash.slice(1).split(',');
+  if (hash.includes('dark')) setTheme('dark');
+  if (hash.includes('small')) setSize(true);
+  const pg = hash.find(h => ['overview','inbox','apps','activity','settings'].includes(h));
+  if (pg) go(pg);
+  if (hash.includes('drawer')) openDrawer(document.querySelectorAll('.trow')[1]);
+</script>
+</body>
+</html>

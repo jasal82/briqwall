@@ -1,0 +1,104 @@
+name: Release
+
+# Ein Tag wie "v0.3.0" baut den Installer und veröffentlicht ein GitHub-Release.
+# Manuell gestartet (workflow_dispatch) entstehen nur Build-Artefakte zum Testen.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Installer bauen
+    runs-on: windows-latest
+    env:
+      # Optional: Code-Signatur. Als Repository-Secrets hinterlegen:
+      #   WINDOWS_CERTIFICATE           Base64 einer .pfx-Datei
+      #   WINDOWS_CERTIFICATE_PASSWORD  Passwort der .pfx-Datei
+      HAS_CERT: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Version bestimmen
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$v") {
+            throw "Tag $env:GITHUB_REF_NAME passt nicht zur Version $v in Cargo.toml"
+          }
+          "VERSION=$v" >> $env:GITHUB_ENV
+          Write-Host "Version $v"
+
+      - name: Frontend – Abhängigkeiten
+        working-directory: ui
+        run: npm ci
+
+      - name: Code-Signatur einrichten
+        if: env.HAS_CERT == 'true'
+        shell: pwsh
+        env:
+          CERT_BASE64: ${{ secrets.WINDOWS_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "cert.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_BASE64))
+          $pw = ConvertTo-SecureString $env:CERT_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $pw
+          Remove-Item $pfx
+          # Tauri signs the app, the bundled service and the installer with this certificate.
+          $conf = "crates/briqwall-ui/tauri.conf.json"
+          $json = Get-Content $conf -Raw | ConvertFrom-Json
+          $win = $json.bundle.windows
+          $win | Add-Member -NotePropertyName certificateThumbprint -NotePropertyValue $cert.Thumbprint -Force
+          $win | Add-Member -NotePropertyName digestAlgorithm -NotePropertyValue "sha256" -Force
+          $win | Add-Member -NotePropertyName timestampUrl -NotePropertyValue "http://timestamp.digicert.com" -Force
+          $json | ConvertTo-Json -Depth 20 | Set-Content $conf -Encoding utf8
+          Write-Host "Signiere mit Zertifikat $($cert.Subject)"
+
+      - name: Bauen (Typprüfung, Tests, Dienst, Oberfläche, Installer)
+        shell: pwsh
+        run: ./scripts/build.ps1
+
+      - name: Artefakte zusammenstellen
+        shell: pwsh
+        run: |
+          $out = New-Item -ItemType Directory -Force dist
+          $setup = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          Copy-Item $setup.FullName "$out/Briqwall-$env:VERSION-setup-x64.exe"
+          # Binaries for manual installation with scripts/install.ps1
+          $tmp = New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/briqwall"
+          Copy-Item target/release/briqwall.exe, target/release/briqwall-service.exe, scripts/install.ps1, scripts/uninstall.ps1 $tmp
+          Compress-Archive -Path "$tmp/*" -DestinationPath "$out/Briqwall-$env:VERSION-binaries-x64.zip"
+          Get-ChildItem $out -File | Where-Object Name -ne "SHA256SUMS.txt" | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+          } | Set-Content "$out/SHA256SUMS.txt" -Encoding ascii
+          Get-Content "$out/SHA256SUMS.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: briqwall-${{ env.VERSION }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: GitHub-Release veröffentlichen
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Briqwall ${{ env.VERSION }}
+          files: dist/*
+          generate_release_notes: true
+          prerelease: ${{ contains(env.VERSION, '-') }}
+          fail_on_unmatched_files: true
