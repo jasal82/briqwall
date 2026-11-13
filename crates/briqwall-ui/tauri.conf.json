@@ -65,7 +65,8 @@
         "installerHooks": "installer/hooks.nsh",
         "compression": "lzma"
       }
-    }
+    },
+    "license": "MIT OR Apache-2.0"
   },
   "mainBinaryName": "briqwall"
 }

@@ -288,3 +288,14 @@ scripts/          build.ps1 / install.ps1 / uninstall.ps1
   eingerichtet hat. Andere Konten bestätigen per UAC.
 * **Notfall:** Sollte etwas die Verbindung blockieren, entfernt
   `briqwall-service reset` (als Administrator) sofort alle Filter.
+
+## Lizenz
+
+Lizenziert nach Wahl unter
+
+* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+* MIT-Lizenz ([LICENSE-MIT](LICENSE-MIT))
+
+Beiträge, die zur Aufnahme in dieses Projekt eingereicht werden, stehen –
+sofern nicht ausdrücklich anders angegeben – im Sinne der Apache-2.0-Lizenz
+unter denselben beiden Lizenzen, ohne zusätzliche Bedingungen.

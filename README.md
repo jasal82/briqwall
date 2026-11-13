@@ -370,3 +370,16 @@ scripts/          build.ps1 / install.ps1 / uninstall.ps1
   it up. Other accounts confirm via UAC.
 * **Emergency:** if something blocks your connection, `briqwall-service reset`
   (as administrator) removes all filters immediately.
+
+## License
+
+Licensed under either of
+
+* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+* MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in this work by you, as defined in the Apache-2.0 license, shall
+be dual licensed as above, without any additional terms or conditions.

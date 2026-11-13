@@ -2,6 +2,7 @@
 name = "briqwall"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Briqwall configuration UI (Tauri)"
 
 [build-dependencies]
